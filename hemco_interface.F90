@@ -255,7 +255,7 @@ contains
         ! TODO: For now, hardcode using 2x2.5 grid for testing. (hplin, 2/12/20)
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
-        call HCO_Grid_Init (IM_in = 144, JM_in = 90, nPET_in = npes)
+        call HCO_Grid_Init (IM_in = 144, JM_in = 91, nPET_in = npes)
         
 
         !-----------------------------------------------------------------------

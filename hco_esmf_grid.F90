@@ -23,6 +23,9 @@ module hco_esmf_grid
     ! ESMF types
     use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid
 
+    ! MPI
+    use mpi,                      only: MPI_PROC_NULL, MPI_SUCCESS
+
     ! Floating point type.
     ! FIXME: May change to HEMCO precision later down the line
     use shr_kind_mod,             only: r8 => shr_kind_r8
@@ -82,8 +85,6 @@ module hco_esmf_grid
     integer, public, protected :: JM                 ! # of lats
     integer, public, protected :: LM                 ! # of levs
 
-    integer, public, protected :: nPET               ! Number of PETs
-
     ! Computed parameters for compatibility with GEOS-Chem
     real(r8), public, protected:: DX                 ! Delta X           [deg long]
     real(r8), public, protected:: DY                 ! Delta X           [deg lat]
@@ -117,6 +118,37 @@ module hco_esmf_grid
                                   AREA_M2(:,:),    & ! Area of grid box [m^2]
                                   Ap     (:),      & ! "hyai" Hybrid-sigma Ap value [Pa]
                                   Bp     (:)         ! "hybi" Hybrid-sigma Bp value [Pa]
+
+    ! MPI Descriptors.
+    ! Ported mostly from edyn_geogrid and edyn_mpi
+    ! -- What everyone knows --
+    integer, public, protected :: HCO_mpicom
+    integer, public, protected :: nPET               ! Number of PETs
+    integer, public, protected :: nPET_lon, nPET_lat ! # of PETs over lon, lat
+
+    integer, public, allocatable :: HCO_petTable(:,:)! 2D table of tasks (dim'l nPET_lon+2, ..lat+2)
+                                                     ! extra left and right used for halos
+
+    ! -- Private to MPI process --
+    ! Note L dimension (levs) not distributed
+    integer, public, protected :: my_IM, my_JM       ! # of lons, levs in this task
+    integer, public, protected :: my_IS, my_IE       ! First and last lons
+    integer, public, protected :: my_JS, my_JE       ! First and last lats
+
+    integer, public, protected :: my_ID              ! my task ID in HCO_Task
+    integer, public, protected :: my_ID_I, my_ID_J   ! mytidi, mytidj coord for current task
+
+    type HCO_Task
+        integer  :: ID          ! identifier
+
+        integer  :: ID_I        ! task coord in longitude dim'l of task table
+        integer  :: ID_J        ! task coord in latitude  dim'l of task table
+        integer  :: IM          ! # of lons on this task
+        integer  :: JM          ! # of lats on this task
+        integer  :: IS, IE      ! start and end longitude dim'l index
+        integer  :: JS, JE      ! start and end latitude  dim'l index
+    end type HCO_Task
+    type(HCO_Task), allocatable:: HCO_Tasks(:)       ! HCO_Tasks(nPET) avail to all tasks
     
 
 contains
@@ -129,7 +161,7 @@ contains
 ! !IROUTINE: HCO_Grid_Init
 !
 ! !DESCRIPTION: Subroutine HCO\_Grid\_Init initializes the HEMCO-CAM interface
-!  grid descriptions.
+!  grid descriptions and MPI distribution.
 !\\
 !\\
 ! !INTERFACE:
@@ -139,8 +171,14 @@ contains
 ! !USES:
 !
         ! MPI Properties from CAM
+        ! Even though CAM's principle is that only spmd_utils uses MPI,
+        ! ionos code uses MPI very liberally. Unfortunately we have to follow
+        ! this example as spmd_utils does not provide many of the relevant
+        ! functionality like the communicator split. But keep this in mind.
         use cam_logfile,        only: iulog
-        use spmd_utils,         only: CAM_mpicom => mpicom
+        use spmd_utils,         only: CAM_mpicom => mpicom, CAM_npes => npes
+        use spmd_utils,         only: MPI_SUCCESS
+        use spmd_utils,         only: iam
         use spmd_utils,         only: masterproc
 
         ! Physical constants
@@ -168,8 +206,14 @@ contains
 ! !LOCAL VARIABLES:
 !
         character(len=*), parameter :: subname = 'HCO_Grid_Init'
-        integer                     :: I, J, L, RC
+        integer                     :: I, J, L, N, RC
         real(r8)                    :: SIN_N, SIN_S, PI_180
+
+        ! MPI stuff
+        integer                     :: color
+        integer                     :: lons_per_task, lons_overflow
+        integer                     :: lats_per_task, lats_overflow
+        integer                     :: lon_beg, lon_end, lat_beg, lat_end, task_cnt
 
         ! Some physical constants...
         PI_180 = pi / 180.0_r8
@@ -224,7 +268,7 @@ contains
 
         ! Compute DX, DY (lon, lat)
         DX = 360.0_r8 / real(IM, r8)
-        DY = 180.0_r8 / real((LM - 1), r8)
+        DY = 180.0_r8 / real((JM - 1), r8)
 
         ! Loop over horizontal grid
         ! Note: Might require special handling at poles. FIXME. (hplin, 2/11/20)
@@ -236,6 +280,14 @@ contains
             ! Latitude centers [deg]
             YMid(I, J) = (DY * (J-1)) -  90.0_r8
 
+            ! Note half-sized polar boxes for global grid, multiply DY by 1/4 at poles
+            if(J == 1) then
+                YMid(I, 1) = -90.0_r8 + (0.25_r8 * DY)
+            endif
+            if(J == JM) then
+                YMid(I, JM) = -90.0_r8 - (0.25_r8 * DY)
+            endif
+
             ! Edges [deg] (or called corners in CAM ionos speak)
             XEdge(I, J) = XMid(I, J) - DX * 0.5_r8
             YEdge(I, J) = YMid(I, J) - DY * 0.5_r8
@@ -245,6 +297,12 @@ contains
             ! Compute the LAST edges
             if(I == IM) then 
                 XEdge(I+1,J) = XEdge(I, J) + DX
+            endif
+
+            ! Enforce half-sized polar boxes where northern edge of grid boxes
+            ! along the SOUTH POLE to be -90 deg lat.
+            if(J == 1) then
+                YEdge(I, 1) = -90.0_r8
             endif
 
             if(J == JM) then 
@@ -305,8 +363,133 @@ contains
         endif
 
         !-----------------------------------------------------------------------
-        ! Distribute among parallelization in MPI
+        ! Distribute among parallelization in MPI 1: Compute distribution
         !-----------------------------------------------------------------------
+
+        ! edyn_geogrid uses 1-D latitude decomposition, so nPET_lon = 1
+        ! and nPET_lat = JM. From tfritz this may not work well with GEOS-Chem
+        ! so let's attempt some other decomposition.
+        do nPET_lon = 1, IM
+            nPET_lat = nPET / nPET_lon
+            if( nPET_lon * nPET_lat == nPET ) then ! ok right now it will force 1xJM
+                exit
+            endif
+        enddo
+
+        ! Verify we have a correct decomposition
+        ! Can't accept invalid decomp; also cannot accept IM, 1 (for sake of consistency)
+        if( nPET_lon * nPET_lat /= nPET .or. nPET_lat == 1 ) then
+            ! Fall back to same 1-D latitude decomposition like edyn_geogrid
+            nPET_lon = 1
+            nPET_lat = JM
+
+            if(masterproc) then
+                write(iulog,*) "HEMCO: HCO_Grid_Init failed to find a reasonable decomp."
+            endif
+        endif
+
+        ! Commit to the decomposition at this point
+        if(masterproc) then
+            write(iulog,*) "HEMCO: HCO_Grid_Init IM, JM, LM", IM, JM, LM
+            write(iulog,*) "HEMCO: nPET_lon * nPET_lat = ", nPET_lon, nPET_lat, nPET
+        endif
+
+        ! Figure out beginning and ending coordinates for each task
+        ! copied from edyn_geogrid
+        lons_per_task = IM / nPET_lon
+        lons_overflow = MOD(IM, nPET_lon)
+        lats_per_task = JM / nPET_lat
+        lats_overflow = MOD(JM, nPET_lat)
+        lon_beg       = 1
+        lon_end       = 0
+        lat_beg       = 1
+        lat_end       = 0
+        task_cnt      = 0
+        jloop: do J = 0, nPET_lat - 1
+            lat_beg = lat_end + 1
+            lat_end = lat_beg + lats_per_task - 1
+            if (J < lats_overflow) then
+                lat_end = lat_end + 1
+            endif
+            lon_end = 0
+            do I = 0, nPET_lon - 1
+                lon_beg = lon_end + 1
+                lon_end = lon_beg + lons_per_task - 1
+                if (I < lons_overflow) then
+                   lon_end = lon_end + 1
+                endif
+                task_cnt = task_cnt+1
+                if (task_cnt > iam) exit jloop ! This makes this loop CPU specific
+            enddo
+        enddo jloop
+
+        !-----------------------------------------------------------------------
+        ! Distribute among parallelization in MPI 2: Distribute among MPI
+        !-----------------------------------------------------------------------
+
+        ! Create communicator
+        ! Color may be unnecessary if using all CAM processes for CAM_mpicom
+        ! but we will retain this functionality for now incase needed (hplin, 2/12/20)
+        color = iam / (nPET_lat * nPET_lon)
+        call MPI_comm_split(CAM_mpicom, color, iam, HCO_mpicom, RC)
+        ASSERT_(RC==MPI_SUCCESS)
+
+        ! Distribute among MPI (mp_distribute_geo in edyn_geogrid)
+        ! Merged all into this huge monolithic routine..
+        ! (lon_beg, lon_end, lat_beg, lat_end, 1, LM, nPET_lon, nPET_lat)
+        ! (lonndx0, lonndx1, latndx0, latndx1, levndx0, levndx1, ntaski_in, ntaskj_in)
+
+        ! Get my indices!
+        my_IS = lon_beg
+        my_IE = lon_end
+        my_JS = lat_beg
+        my_JE = lat_end
+
+        ! Allocate task info table
+        allocate(HCO_Tasks(0:nPET-1), stat=RC)
+
+        ! Allocate 2D table of TASKS (not i j coordinates)
+        allocate(HCO_petTable(-1:nPET_lon, -1:nPET_lat), stat=RC)
+        ASSERT_(RC==0)
+
+        ! 2D table of tasks communicates to MPI_PROC_NULL by default so talking
+        ! to that PID has no effect in MPI comm
+        HCO_petTable(:,:) = MPI_PROC_NULL
+
+        ! Figure out ranks for the petTable, which is a table of I, J PETs
+        ! with halo (hplin, 2/12/20)
+        my_ID = iam
+        N = 0
+        do J = 0, nPET_lat-1
+            do I = 0, nPET_lon-1
+                HCO_petTable(I, J) = N
+                if(iam == N) then
+                    my_ID_I = I
+                    my_ID_J = J ! Found my place in the PET table
+                endif
+                N = N + 1 ! move on to the next rank
+            enddo
+
+            ! Tasks are periodic in longitude (from edyn_mpi) for haloing
+            ! FIXME: Check if this is true in HCO distribution. Maybe not
+            HCO_petTable(-1, J) = HCO_petTable(nPET_lon-1, J)
+            HCO_petTable(nPET_lon, J) = HCO_petTable(0, J)
+        enddo
+
+        ! Print some debug information on the distribution
+        if( .true. ) then
+            write(iulog, "('HEMCO: MPIGrid mytid=',i4,' nPET_lon,lat=',2i4,' my_ID_I,J=',2i4, &
+              ' lon0,1=',2i4,' lat0,1=',2i4)") &
+              my_ID,nPET_lon,nPET_lat,my_ID_I,my_ID_J,my_IS,my_IE,my_JS,my_JE
+
+            write(iulog,"(/,'nPET=',i3,' nPET_lon=',i2,' nPET_lat=',i2,' Task Table:')") &
+            nPET,nPET_lon,nPET_lat
+            do J=-1,nPET_lat
+                write(iulog,"('J=',i3,' HCO_petTable(:,J)=',100i3)") J,HCO_petTable(:,J)
+            enddo
+        endif
+
+
 
     end subroutine HCO_Grid_Init
 !EOC
