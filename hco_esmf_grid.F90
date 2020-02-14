@@ -25,7 +25,7 @@ module hco_esmf_grid
     use ESMF,                     only: ESMF_SUCCESS
 
     ! MPI
-    use mpi,                      only: MPI_PROC_NULL, MPI_SUCCESS
+    use mpi,                      only: MPI_PROC_NULL, MPI_SUCCESS, MPI_INTEGER
 
     ! Floating point type.
     ! FIXME: May change to HEMCO precision later down the line
@@ -500,7 +500,7 @@ contains
         enddo
 
         ! Print some debug information on the distribution
-        if( .true. ) then
+        if( .false. ) then
             ! FIXME Don't write to 6 once finished debugging, this literally
             ! writes to cesm.log
             write(6, "('HEMCO: MPIGrid mytid=',i4,' my_IM, my_JM=',2i4,' my_ID_I,J=',2i4, &
@@ -526,7 +526,7 @@ contains
             HCO_Tasks(N)%IM   = my_IM       ! # of lons on this task
             HCO_Tasks(N)%JM   = my_JM       ! # of lats on this task
             HCO_Tasks(N)%IS   = my_IS
-            Hco_Tasks(N)%IE   = my_IE       ! start and end longitude dim'l index
+            HCO_Tasks(N)%IE   = my_IE       ! start and end longitude dim'l index
             HCO_Tasks(N)%JS   = my_JS
             HCO_Tasks(N)%JE   = my_JE       ! start and end latitude  dim'l index
         enddo
@@ -541,9 +541,60 @@ contains
 
         ! Note: 9 here is the length of the HCO_Tasks(N) component.
 
-        allocate(itasks_send(9, 0:nPET-1), stat=RC)
+#define HCO_TASKS_ITEM_LENGTH 9
+        allocate(itasks_send(HCO_TASKS_ITEM_LENGTH, 0:nPET-1), stat=RC)
+        allocate(itasks_recv(HCO_TASKS_ITEM_LENGTH, 0:nPET-1), stat=RC)
+        ASSERT_(RC==0)
 
-        
+        ! Fill my send PET info array
+        do N = 0, nPET-1
+            itasks_send(1,N) = iam         ! %ID   identifier
+            itasks_send(2,N) = my_ID_I     ! %ID_I task coord in longitude dim'l of task table
+            itasks_send(3,N) = my_ID_J     ! %ID_J task coord in latitude  dim'l of task table
+            itasks_send(4,N) = my_IM       ! %IM   # of lons on this task
+            itasks_send(5,N) = my_JM       ! %JM   # of lats on this task
+            itasks_send(6,N) = my_IS       ! %IS   
+            itasks_send(7,N) = my_IE       ! %IE   start and end longitude dim'l index
+            itasks_send(8,N) = my_JS       ! %JS   
+            itasks_send(9,N) = my_JE       ! %JE   start and end latitude  dim'l index
+        enddo
+
+        ! Send MPI all-to-all
+        call mpi_alltoall(itasks_send, HCO_TASKS_ITEM_LENGTH, MPI_INTEGER, &
+                          itasks_recv, HCO_TASKS_ITEM_LENGTH, MPI_INTEGER, &
+                          CAM_mpicom,  RC)
+        ASSERT_(RC==MPI_SUCCESS)
+
+        ! Unpack receiving data back
+        do N = 0, nPET-1
+            HCO_Tasks(N)%ID   = itasks_recv(1,N)
+            HCO_Tasks(N)%ID_I = itasks_recv(2,N)
+            HCO_Tasks(N)%ID_J = itasks_recv(3,N)
+            HCO_Tasks(N)%IM   = itasks_recv(4,N)
+            HCO_Tasks(N)%JM   = itasks_recv(5,N)
+            HCO_Tasks(N)%IS   = itasks_recv(6,N)
+            HCO_Tasks(N)%IE   = itasks_recv(7,N)
+            HCO_Tasks(N)%JS   = itasks_recv(8,N)
+            HCO_Tasks(N)%JE   = itasks_recv(9,N)
+
+            ! Debug output for masterproc
+            ! if(masterproc) then
+            !     write(iulog,*) "(mp) Task ", N
+            !     write(iulog,*) "%ID  ", HCO_Tasks(N)%ID  
+            !     write(iulog,*) "%ID_I", HCO_Tasks(N)%ID_I
+            !     write(iulog,*) "%ID_J", HCO_Tasks(N)%ID_J
+            !     write(iulog,*) "%IM  ", HCO_Tasks(N)%IM  
+            !     write(iulog,*) "%JM  ", HCO_Tasks(N)%JM  
+            !     write(iulog,*) "%IS  ", HCO_Tasks(N)%IS  
+            !     write(iulog,*) "%IE  ", HCO_Tasks(N)%IE  
+            !     write(iulog,*) "%JS  ", HCO_Tasks(N)%JS  
+            !     write(iulog,*) "%JE  ", HCO_Tasks(N)%JE  
+            ! endif
+        enddo
+
+        ! Reclaim space
+        deallocate(itasks_send)
+        deallocate(itasks_recv)
 
         !
         ! Just remember that my_IM, my_JM ... are your keys to generating

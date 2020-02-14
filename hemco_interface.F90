@@ -256,7 +256,11 @@ contains
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
         call HCO_Grid_Init (IM_in = 144, JM_in = 91, nPET_in = npes, RC=RC)
-        
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
+        endif
 
         !-----------------------------------------------------------------------
         ! Initialize HEMCO!
