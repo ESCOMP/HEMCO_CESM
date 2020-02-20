@@ -70,14 +70,8 @@ module hemco_interface
 !
 ! !PRIVATE TYPES:
 !
-    type(ESMF_Mesh)      :: CAM_PhysMesh        ! Copy of CAM physics mesh
-    type(ESMF_DistGrid)  :: CAM_DistGrid        ! DE-local allocation descriptor DistGrid (2D)
     type(ESMF_GridComp)  :: HCO_GridComp        ! HEMCO GridComp
     type(ESMF_State)     :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
-    
-    integer              :: col_start, col_end  ! idx of columns in this PET
-    integer              :: col_total           ! # of columns in this PET
-    integer              :: nlev = 0            ! # of levs in this PET
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -263,6 +257,16 @@ contains
         endif
 
         !-----------------------------------------------------------------------
+        ! Update HEMCO regrid descriptors for the first time.
+        !-----------------------------------------------------------------------
+        call HCO_Grid_UpdateRegrid(RC=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> First refresh of HEMCO Regrid descriptors"
+        endif
+
+        !-----------------------------------------------------------------------
         ! Initialize HEMCO!
         !-----------------------------------------------------------------------
         
@@ -274,9 +278,23 @@ contains
         endif
 
     end subroutine HCOI_Chunk_Init
-
-    ! Run
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCOI_Chunk_Run
+!
+! !DESCRIPTION: HCOI\_Chunk\_Run is the run method for the CAM interface to HEMCO.
+!\\
+!\\
+! !INTERFACE:
+!
     subroutine HCOI_Chunk_Run(cam_in, phys_state, pbuf2d, phase)
+!
+! !USES:
+!
         ! Type descriptors
         use camsrfexch,     only: cam_in_t
         use physics_types,  only: physics_state
@@ -289,13 +307,22 @@ contains
         ! ESMF
         use ESMF,           only: ESMF_GridCompRun
 
-        ! Input
+!
+! !INPUT PARAMETERS:
+!
         type(cam_in_t),      intent(inout) :: cam_in(begchunk:endchunk)
         type(physics_state), intent(inout) :: phys_state(begchunk:endchunk)
         type(physics_buffer_desc), pointer :: pbuf2d(:,:)
         integer, intent(in)                :: phase               ! 1, 2
-
-        ! Local variables
+!
+! !REVISION HISTORY:
+!  06 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
         character(len=*), parameter  :: subname = 'HCOI_Chunk_Run'
         integer                      :: RC                        ! Return code
 
@@ -328,12 +355,23 @@ contains
             write(iulog,*) "HEMCO_CAM: Leaving HCOI_Chunk_Run"
         endif
     end subroutine HCOI_Chunk_Run
-
-    ! Final
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCOI_Chunk_Final
+!
+! !DESCRIPTION: HCOI\_Chunk\_Final cleans up the CAM interface to HEMCO.
+!\\
+!\\
+! !INTERFACE:
+!
     subroutine HCOI_Chunk_Final()
         ! Stub...
     end subroutine HCOI_Chunk_Final
-
+!EOC
     !-----------------------------------------------------------------------
     !              H E M C O   W R A P P E R   G R I D C O M P             !
     !-----------------------------------------------------------------------
@@ -393,15 +431,6 @@ contains
     ! Init routine for the Gridded Component
     ! Largely based off edyn_grid_comp::edyn_gcomp_init
     subroutine HCO_GC_Init(GC, IMPORT, EXPORT, Clock, RC)
-        use ESMF,         only: ESMF_DistGridCreate, ESMF_MeshCreate
-        use ESMF,         only: ESMF_FILEFORMAT_ESMFMESH
-        use ESMF,         only: ESMF_MeshIsCreated, ESMF_MeshDestroy
-
-        ! CAM instance and physical grid information
-        use cam_instance, only: inst_name
-        use phys_control, only: phys_getopts
-        use phys_grid,    only: get_ncols_p, get_gcol_p
-
         use spmd_utils,     only: masterproc
         use cam_logfile,    only: iulog
 
@@ -413,58 +442,18 @@ contains
         integer, intent(out)                  :: RC
 
         ! Local variables
-        integer                               :: ncols
-        integer                               :: chnk, col, dindex
-        integer,                allocatable   :: decomp(:)
-        character(len=256)                    :: grid_file
         character(len=*),       parameter     :: subname = 'HCO_GC_Init'
 
-        ! Get the physics grid information
-        call phys_getopts(physics_grid_out=grid_file)
-
-        if(masterproc) then
-            write(iulog,*) "physics_grid_out=", grid_file
-        endif
-
-        ! Compute local decomposition (global variable in-module)
-        col_total = 0 ! Sum of columns on this PET in all chunks
-        do chnk = begchunk, endchunk
-            col_total = col_total + get_ncols_p(chnk)
-        enddo
-        allocate(decomp(col_total))
-        dindex = 0
-        do chnk = begchunk, endchunk
-            ncols = get_ncols_p(chnk)
-            do col = 1, ncols
-                dindex = dindex + 1
-                decomp(dindex) = get_gcol_p(chnk, col)
-            enddo
-        enddo
-
-        ! Build the 2D field CAM DistGrid based on the physics decomposition
-        CAM_DistGrid = ESMF_DistGridCreate(arbSeqIndexList=decomp, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        ! Release memory if any is being taken, to avoid leakage
-        if(ESMF_MeshIsCreated(CAM_PhysMesh)) then
-            call ESMF_MeshDestroy(CAM_PhysMesh)
-        endif
-
-        ! Create the physics decomposition ESMF mesh
-        CAM_PhysMesh = ESMF_MeshCreate(trim(grid_file), ESMF_FILEFORMAT_ESMFMESH, &
-                                       elementDistGrid=CAM_DistGrid, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        ! Todo: in edyn_gcomp they send the CAM_PhysMesh to the regridder in
-        !       edyn_esmf. Maybe we should do that and send to hco_esmf_grid.
-        ! But I think we can avoid doing that for now? The memory reclaiming
-        ! part is now written before CAM_PhysMesh is built.rt (hplin, 2/6/20)
+        ! Note hplin 2/17/20: It seems like the physics mesh is re-created in
+        ! edyn_esmf through edyn_create_physmesh. It may be redundant to do
+        ! the CAM_DistGrid and CAM_PhysMesh maneuvers here and do this in
+        ! HCO_ESMF_Grid::HCO_Grid_ESMF_CreateCAM instead.
 
     end subroutine HCO_GC_Init
 
     ! Finalize Gridded Component
     subroutine HCO_GC_Final(GC, IMPORT, EXPORT, Clock, RC)
-        use ESMF,         only: ESMF_MeshDestroy
+        ! use ESMF,         only: ESMF_MeshDestroy
 
         ! Dummy arguments
         type(ESMF_GridComp)                   :: GC
@@ -476,8 +465,8 @@ contains
         ! Local variables
         character(len=*),       parameter     :: subname = 'HCO_GC_Final'
 
-        call ESMF_MeshDestroy(CAM_PhysMesh, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
+        ! call ESMF_MeshDestroy(CAM_PhysMesh, rc=RC)
+        ! ASSERT_(RC==ESMF_SUCCESS)
     end subroutine HCO_GC_Final
 
     subroutine HCO_GC_SetServices(GC, RC)

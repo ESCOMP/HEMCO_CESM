@@ -21,7 +21,7 @@ module hco_esmf_grid
     use hco_esmf_wrappers
 
     ! ESMF types
-    use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid
+    use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid, ESMF_Grid
     use ESMF,                     only: ESMF_SUCCESS
 
     ! MPI
@@ -38,6 +38,12 @@ module hco_esmf_grid
 ! !PUBLIC MEMBER FUNCTIONS:
 !
     public        :: HCO_Grid_Init
+    public        :: HCO_Grid_UpdateRegrid
+!
+! !PRIVATE MEMBER FUNCTIONS:
+!
+    private       :: HCO_Grid_ESMF_CreateCAM
+    private       :: HCO_Grid_ESMF_CreateHCO         ! Create HEMCO lat-lon grid in ESMF
 
 ! !REMARKS:
 !
@@ -47,6 +53,11 @@ module hco_esmf_grid
 !  Notes:
 !  (i)  In GEOS-Chem, level 1 is bottom-of-atmos, so 'bottom2top' lev_sequence.
 !  (ii) 
+!
+!  The CreateHCO routine replaces the edyn_esmf routines for create_geo and geo2phys
+!  grid as they only differ by a grid staggering configuration (center and corner).
+!  Thus they are merged into one routine and write to two grids, HCO_Grid and HCO2CAM_Grid.
+!  (hplin, 2/20/20)
 !
 !  ---------------------- BELOW ARE SIDE REMARKS ---------------------------------
 !  This module was written by hplin on a gloomy day (as usual) in Cambridge/Boston
@@ -72,11 +83,12 @@ module hco_esmf_grid
 !
 ! !REVISION HISTORY:
 !  11 Feb 2020 - H.P. Lin    - First crack.
+!  17 Feb 2020 - H.P. Lin    - Start of work on regrid routines.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
 !
-! !PRIVATE TYPES:
+! !PUBLIC TYPES:
 !
     ! Global grid parameters.
     ! this may be refactored into some other structure that isn't global later.
@@ -150,8 +162,15 @@ module hco_esmf_grid
         integer  :: JS, JE      ! start and end latitude  dim'l index
     end type HCO_Task
     type(HCO_Task), allocatable:: HCO_Tasks(:)       ! HCO_Tasks(nPET) avail to all tasks
-    
+!
+! !PRIVATE TYPES:
+!
+    type(ESMF_Grid)      :: HCO_Grid
+    type(ESMF_Grid)      :: HCO2CAM_Grid
+    type(ESMF_Mesh)      :: CAM_PhysMesh        ! Copy of CAM physics mesh
+    type(ESMF_DistGrid)  :: CAM_DistGrid        ! DE-local allocation descriptor DistGrid (2D)
 
+    integer              :: cam_last_atm_id     ! Last CAM atmospheric ID
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -219,6 +238,9 @@ contains
 
         ! Send and receive buffers
         integer, allocatable        :: itasks_send(:,:), itasks_recv(:,:)
+
+        ! Reset CAM atmospheric ID because we know nothing about it (hplin, 2/20/20)
+        cam_last_atm_id = -999
 
         ! Some physical constants...
         PI_180 = pi / 180.0_r8
@@ -606,5 +628,447 @@ contains
         RC = ESMF_SUCCESS
 
     end subroutine HCO_Grid_Init
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_UpdateRegrid
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_UpdateRegrid initializes or updates the
+!  regridding information used in the HEMCO_CESM interface.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_UpdateRegrid( RC )
+!
+! !USES:
+!
+        ! MPI Properties from CAM
+        ! Even though CAM's principle is that only spmd_utils uses MPI,
+        ! ionos code uses MPI very liberally. Unfortunately we have to follow
+        ! this example as spmd_utils does not provide many of the relevant
+        ! functionality like the communicator split. But keep this in mind.
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: CAM_mpicom => mpicom, CAM_npes => npes
+        use spmd_utils,         only: MPI_SUCCESS
+        use spmd_utils,         only: iam
+        use spmd_utils,         only: masterproc
+
+        use cam_instance,       only: atm_id
+!
+! !OUTPUT PARAMETERS:
+!
+        integer, intent(out)                   :: RC
+!
+! !REMARKS:
+!  This field will ONLY update if it recognizes a change in the CAM instance
+!  information, as determined by cam_instance::atm_id which is saved in the
+!  module's cam_last_atm_id field.
+!
+!  This allows the function HCO_Grid_UpdateRegrid be called both in init and run
+!  without performance / memory repercussions (hopefully...)
+!
+! !REVISION HISTORY:
+!  20 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_UpdateRegrid'
+
+        ! Assume success
+        RC = ESMF_SUCCESS
+
+        ! Check if we need to update
+        if(cam_last_atm_id == atm_id) then
+            if(masterproc) then
+                write(iulog,*) ">> UpdateRegrid received ", atm_id, " already set"
+                return
+            endif
+        endif
+
+        cam_last_atm_id = atm_id
+
+        ! Create CAM physics mesh...
+        call HCO_Grid_ESMF_CreateCAM( RC )
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! Create HEMCO grid in ESMF format
+        call HCO_Grid_ESMF_CreateHCO( RC )
+        ASSERT_(RC==ESMF_SUCCESS)
+
+
+
+
+
+    end subroutine HCO_Grid_UpdateRegrid
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_ESMF_CreateCAM
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateCAM creates the physics mesh
+!  from CAM and stores in the ESMF state for regridding.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_ESMF_CreateCAM( RC )
+!
+! !USES:
+!
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+
+        ! Phys constants
+        use shr_const_mod,      only: pi => shr_const_pi
+
+        ! Grid properties in CAM
+        use cam_instance,       only: inst_name
+        use phys_control,       only: phys_getopts
+        use phys_grid,          only: get_ncols_p, get_gcol_p, get_rlon_all_p, get_rlat_all_p
+        use ppgrid,             only: begchunk, endchunk
+        use ppgrid,             only: pcols                        ! # of col chunks
+
+        ! ESMF
+        use ESMF,               only: ESMF_DistGridCreate, ESMF_MeshCreate
+        use ESMF,               only: ESMF_MeshGet
+        use ESMF,               only: ESMF_FILEFORMAT_ESMFMESH
+        use ESMF,               only: ESMF_MeshIsCreated, ESMF_MeshDestroy
+!
+! !OUTPUT PARAMETERS:
+!
+        integer, intent(out)                   :: RC
+!
+! !REMARKS:
+!
+! !REVISION HISTORY:
+!  11 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateCAM'
+
+        ! For allocation of the distGrid and Mesh
+        integer                               :: ncols
+        integer                               :: chnk, col, dindex
+        integer,                allocatable   :: decomp(:)
+        integer                               :: col_total
+        character(len=256)                    :: grid_file
+
+        ! For verification of the mesh
+        integer                               :: spatialDim
+        integer                               :: numOwnedElements
+        real(r8), pointer                     :: ownedElemCoords(:)
+        real(r8), pointer                     :: latCAM(:), latMesh(:)
+        real(r8), pointer                     :: lonCAM(:), lonMesh(:)
+        real(r8)                              :: latCAM_R(pcols)         ! array of chunk lat
+        real(r8)                              :: lonCAM_R(pcols)         ! array of chunk long
+
+        integer                               :: i, c, n
+        real(r8), parameter                   :: radtodeg = 180.0_r8/pi
+
+        ! Assume success
+        RC = ESMF_SUCCESS
+
+        !-----------------------------------------------------------------------
+        ! Compute the CAM_DistGrid and CAM_PhysMesh
+        !-----------------------------------------------------------------------
+        ! Get the physics grid information
+        call phys_getopts(physics_grid_out=grid_file)
+
+        if(masterproc) then
+            write(iulog,*) "physics_grid_out=", grid_file
+        endif
+
+        ! Compute local decomposition (global variable in-module)
+        col_total = 0 ! Sum of columns on this PET in all chunks
+        do chnk = begchunk, endchunk
+            col_total = col_total + get_ncols_p(chnk)
+        enddo
+        allocate(decomp(col_total))
+        allocate(lonCAM(col_total))
+        allocate(latCAM(col_total)) ! the _R variants are already allocated to pcols
+
+        ! ...and also attach to the loop computing lat and lons for CAM physics mesh
+        ! to be used later.
+        dindex = 0
+        do chnk = begchunk, endchunk
+            ncols = get_ncols_p(chnk)
+
+            ! Get [rad] lat and lons
+            call get_rlon_all_p(chnk, ncols, lonCAM_R)
+            call get_rlat_all_p(chnk, ncols, latCAM_R)
+
+            do col = 1, ncols
+                dindex = dindex + 1
+                decomp(dindex) = get_gcol_p(chnk, col)
+
+                lonCAM(dindex) = lonCAM_R(col) * radtodeg
+                latCAM(dindex) = latCAM_R(col) * radtodeg
+            enddo
+        enddo
+
+        ! Build the 2D field CAM DistGrid based on the physics decomposition
+        CAM_DistGrid = ESMF_DistGridCreate(arbSeqIndexList=decomp, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! Release memory if any is being taken, to avoid leakage
+        if(ESMF_MeshIsCreated(CAM_PhysMesh)) then
+            call ESMF_MeshDestroy(CAM_PhysMesh)
+        endif
+
+        ! Create the physics decomposition ESMF mesh
+        CAM_PhysMesh = ESMF_MeshCreate(trim(grid_file), ESMF_FILEFORMAT_ESMFMESH, &
+                                       elementDistGrid=CAM_DistGrid, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        !-----------------------------------------------------------------------
+        ! Validate mesh coordinates against model physics column coords.
+        !-----------------------------------------------------------------------
+        ! (From edyn_esmf::edyn_create_physmesh)
+        call ESMF_MeshGet(CAM_PhysMesh, spatialDim=spatialDim, &
+                                        numOwnedElements=numOwnedElements, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(numOwnedElements /= col_total) then
+            write(iulog,*) "HEMCO: ESMF_MeshGet numOwnedElements =", numOwnedElements, &
+                           "col_total =", col_total, " MISMATCH! Aborting"
+            ASSERT_(.false.)
+        endif
+
+        ! Coords for the CAM_PhysMesh
+        allocate(ownedElemCoords(spatialDim * numOwnedElements))
+        allocate(lonMesh(col_total), latMesh(col_total))
+
+        call ESMF_MeshGet(CAM_PhysMesh, ownedElemCoords=ownedElemCoords, rc=RC)
+
+        do n = 1, col_total
+            lonMesh(n) = ownedElemCoords(2*n-1)
+            latMesh(n) = ownedElemCoords(2*n)
+        enddo
+
+        ! Error check coordinates
+        do n = 1, col_total
+            if(abs(lonMesh(n) - lonCAM(n)) > 0.000001_r8) then
+                if((abs(lonMesh(n) - lonCAM(n)) > 360.000001_r8) .or. &
+                   (abs(lonMesh(n) - lonCAM(n)) < 359.99999_r8)) then
+                    write(6,*) "HEMCO: ESMF_MeshGet VERIFY fail! n, lonMesh, lonCAM, delta"
+                    write(6,*) n, lonMesh(n), lonCAM(n), abs(lonMesh(n)-lonCAM(n))
+                    ASSERT_(.false.)
+                endif
+            endif
+
+            if(abs(latMesh(n) - latCAM(n)) > 0.000001_r8) then
+                if(.not. ((abs(latCAM(n)) > 88.0_r8) .and. (abs(latMesh(n)) > 88.0_r8))) then
+                    write(6,*) "HEMCO: ESMF_MeshGet VERIFY fail! n, latmesh, latCAM, delta"
+                    write(6,*) n, latMesh(n), latCAM(n), abs(latMesh(n)-latCAM(n))
+                    ASSERT_(.false.)
+                endif
+            endif
+        enddo
+
+        ! Ready to go
+        if(masterproc) then
+            write(iulog,*) ">> HCO_Grid_ESMF_CreateCAM ok, dim'l = ", col_total
+        endif
+
+        ! Free memory
+        deallocate(ownedElemCoords)
+        deallocate(lonCAM, lonMesh)
+        deallocate(latCAM, latMesh)
+        deallocate(decomp)
+
+    end subroutine HCO_Grid_ESMF_CreateCAM
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_ESMF_CreateHCO
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateHCO creates the HEMCO grid
+!  in center and corner staggering modes in ESMF_Grid format,
+!  and stores in the ESMF state for regridding.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_ESMF_CreateHCO( RC )
+!
+! !USES:
+!
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+
+        ! ESMF
+        use ESMF,               only: ESMF_GridCreate1PeriDim, ESMF_INDEX_GLOBAL
+        use ESMF,               only: ESMF_STAGGERLOC_CENTER, ESMF_STAGGERLOC_CORNER
+        use ESMF,               only: ESMF_GridAddCoord, ESMF_GridGetCoord
+!
+! !OUTPUT PARAMETERS:
+!
+        integer, intent(out)                   :: RC
+!
+! !REMARKS:
+!
+! !REVISION HISTORY:
+!  20 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCO'
+
+        integer                     :: i, j, n, ii, jj
+        integer                     :: lbnd_lat, ubnd_lat, lbnd_lon, ubnd_lon
+        integer                     :: lbnd(1), ubnd(1)
+        integer                     :: nlons_task(nPET_lon) ! # lons per task
+        integer                     :: nlats_task(nPET_lat) ! # lats per task
+        real(r8), pointer :: coordX(:), coordY(:)
+        real(r8), pointer :: coordX_E(:), coordY_E(:)
+
+        !-----------------------------------------------------------------------
+        ! Task distribution for ESMF grid
+        !-----------------------------------------------------------------------
+        do i = 1, nPET_lon
+            loop: do n = 0, nPET-1
+            if (HCO_Tasks(n)%ID_I == i-1) then
+                nlons_task(i) = HCO_Tasks(n)%IM
+                exit loop
+            endif
+            enddo loop
+        enddo
+        do j = 1, nPET_lat
+            loop1: do n = 0, nPET-1
+            if (HCO_Tasks(n)%ID_J == j-1) then
+                nlats_task(j) = HCO_Tasks(n)%JM
+                exit loop1
+            endif
+            enddo loop1
+        enddo
+
+        !-----------------------------------------------------------------------
+        ! Create source grids and allocate coordinates.
+        !-----------------------------------------------------------------------
+        ! Create pole-based 2D geographic source grid
+        HCO_Grid = ESMF_GridCreate1PeriDim(                            &
+                        countsPerDEDim1=nlons_task, coordDep1=(/1/),   &
+                        countsPerDEDim2=nlats_task, coordDep2=(/2/),   &
+                        indexflag=ESMF_INDEX_GLOBAL,                   &
+                        minIndex=(/1,1/), rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_GridAddCoord(HCO_Grid, staggerloc=ESMF_STAGGERLOC_CENTER, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        HCO2CAM_Grid = ESMF_GridCreate1PeriDim(                        &
+                        countsPerDEDim1=nlons_task, coordDep1=(/1/),   &
+                        countsPerDEDim2=nlats_task, coordDep2=(/2/),   &
+                        indexflag=ESMF_INDEX_GLOBAL,                   &
+                        minIndex=(/1,1/), rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_GridAddCoord(HCO2CAM_Grid, staggerloc=ESMF_STAGGERLOC_CORNER, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        !-----------------------------------------------------------------------
+        ! Get pointer and set coordinates - CENTER HEMCO GRID
+        !-----------------------------------------------------------------------
+        call ESMF_GridGetCoord(HCO_Grid, coordDim=1, localDE=0,        &
+                               computationalLBound=lbnd,               &
+                               computationalUBound=ubnd,               &
+                               farrayPtr=coordX,                       &
+                               staggerloc=ESMF_STAGGERLOC_CENTER,      &
+                               rc=RC)
+        ! Longitude range -180.0, 180.0 is XMid for center staggering
+        lbnd_lon = lbnd(1)
+        ubnd_lon = ubnd(1)
+        do i = lbnd_lon, ubnd_lon
+            ! Longitude centers: assume longitude centers are regular across grid.
+            ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
+            ! (hplin, 2/20/20)
+            ii = i - lbnd_lon + 1
+            coordX(i) = XMid(ii,1)
+        enddo
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_GridGetCoord(HCO_Grid, coordDim=2, localDE=0,        &
+                               computationalLBound=lbnd,               &
+                               computationalUBound=ubnd,               &
+                               farrayPtr=coordY,                       &
+                               staggerloc=ESMF_STAGGERLOC_CENTER,      &
+                               rc=RC)
+        lbnd_lat = lbnd(1)
+        ubnd_lat = ubnd(1)
+        do j = lbnd_lat, ubnd_lat
+            ! Latitude centers: Same caveat applies.
+            jj = j - lbnd_lat + 1
+            coordY(j) = YMid(1,jj)
+        enddo
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        !-----------------------------------------------------------------------
+        ! Get pointer and set coordinates - CORNER HEMCO GRID
+        !-----------------------------------------------------------------------
+        write(6,*) "dbg hplin 2/20/20: 1028"
+        call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=1, localDE=0,    &
+                               computationalLBound=lbnd,               &
+                               computationalUBound=ubnd,               &
+                               farrayPtr=coordX_E,                     &
+                               staggerloc=ESMF_STAGGERLOC_CORNER,      &
+                               rc=RC)
+        write(6,*) "dbg hplin 2/20/20: 1037", lbnd(1), ubnd(1)
+        ! Longitude range -180.0, 180.0 is XEdge for CORNER staggering
+        lbnd_lon = lbnd(1)
+        ubnd_lon = ubnd(1)
+        do i = lbnd_lon, ubnd_lon
+            ! Longitude edges: assume longitude edges are regular across grid.
+            ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
+            ! (hplin, 2/20/20)
+            ii = i - lbnd_lon + 1
+            coordX_E(i) = XEdge(ii,1)
+        enddo
+        write(6,*) "dbg hplin 2/20/20: 1048"
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=2, localDE=0,    &
+                               computationalLBound=lbnd,               &
+                               computationalUBound=ubnd,               &
+                               farrayPtr=coordY_E,                     &
+                               staggerloc=ESMF_STAGGERLOC_CORNER,      &
+                               rc=RC)
+        write(6,*) "dbg hplin 2/20/20: 1057", lbnd(1), ubnd(1)
+        lbnd_lat = lbnd(1)
+        ubnd_lat = ubnd(1)
+        do j = lbnd_lat, ubnd_lat
+            ! Latitude edges: Same caveat applies.
+            jj = j - lbnd_lat + 1
+            coordY_E(j) = YEdge(1,jj)
+        enddo
+        write(6,*) "dbg hplin 2/20/20: 1065"
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> HCO_Grid_ESMF_CreateHCO ok"
+        endif
+
+    end subroutine HCO_Grid_ESMF_CreateHCO
 !EOC
 end module hco_esmf_grid
