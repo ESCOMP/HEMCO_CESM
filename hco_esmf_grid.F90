@@ -22,6 +22,7 @@ module hco_esmf_grid
 
     ! ESMF types
     use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid, ESMF_Grid
+    use ESMF,                     only: ESMF_Field
     use ESMF,                     only: ESMF_SUCCESS
 
     ! MPI
@@ -44,6 +45,7 @@ module hco_esmf_grid
 !
     private       :: HCO_Grid_ESMF_CreateCAM
     private       :: HCO_Grid_ESMF_CreateHCO         ! Create HEMCO lat-lon grid in ESMF
+    private       :: HCO_Grid_ESMF_CreateHCOField    ! Create field on HEMCO ll grid
 
 ! !REMARKS:
 !
@@ -704,8 +706,6 @@ contains
 
 
 
-
-
     end subroutine HCO_Grid_UpdateRegrid
 !EOC
 !------------------------------------------------------------------------------
@@ -998,13 +998,19 @@ contains
                                staggerloc=ESMF_STAGGERLOC_CENTER,      &
                                rc=RC)
         ! Longitude range -180.0, 180.0 is XMid for center staggering
+
+        ! Note: Compute bounds are not starting from 1 almost surely
+        ! and they should be on the same decomp as the global elems.
+        ! So they should be read through the global indices (ii = i, jj = j)
+        ! and not offset ones (a la WRF) (hplin, 2/21/20)
+
         lbnd_lon = lbnd(1)
         ubnd_lon = ubnd(1)
         do i = lbnd_lon, ubnd_lon
             ! Longitude centers: assume longitude centers are regular across grid.
             ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
             ! (hplin, 2/20/20)
-            ii = i - lbnd_lon + 1
+            ii = i! - lbnd_lon + 1
             coordX(i) = XMid(ii,1)
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
@@ -1019,7 +1025,7 @@ contains
         ubnd_lat = ubnd(1)
         do j = lbnd_lat, ubnd_lat
             ! Latitude centers: Same caveat applies.
-            jj = j - lbnd_lat + 1
+            jj = j! - lbnd_lat + 1
             coordY(j) = YMid(1,jj)
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
@@ -1027,14 +1033,12 @@ contains
         !-----------------------------------------------------------------------
         ! Get pointer and set coordinates - CORNER HEMCO GRID
         !-----------------------------------------------------------------------
-        write(6,*) "dbg hplin 2/20/20: 1028"
         call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=1, localDE=0,    &
                                computationalLBound=lbnd,               &
                                computationalUBound=ubnd,               &
                                farrayPtr=coordX_E,                     &
                                staggerloc=ESMF_STAGGERLOC_CORNER,      &
                                rc=RC)
-        write(6,*) "dbg hplin 2/20/20: 1037", lbnd(1), ubnd(1)
         ! Longitude range -180.0, 180.0 is XEdge for CORNER staggering
         lbnd_lon = lbnd(1)
         ubnd_lon = ubnd(1)
@@ -1042,10 +1046,9 @@ contains
             ! Longitude edges: assume longitude edges are regular across grid.
             ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
             ! (hplin, 2/20/20)
-            ii = i - lbnd_lon + 1
+            ii = i! - lbnd_lon + 1
             coordX_E(i) = XEdge(ii,1)
         enddo
-        write(6,*) "dbg hplin 2/20/20: 1048"
         ASSERT_(RC==ESMF_SUCCESS)
 
         call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=2, localDE=0,    &
@@ -1054,15 +1057,13 @@ contains
                                farrayPtr=coordY_E,                     &
                                staggerloc=ESMF_STAGGERLOC_CORNER,      &
                                rc=RC)
-        write(6,*) "dbg hplin 2/20/20: 1057", lbnd(1), ubnd(1)
         lbnd_lat = lbnd(1)
         ubnd_lat = ubnd(1)
         do j = lbnd_lat, ubnd_lat
             ! Latitude edges: Same caveat applies.
-            jj = j - lbnd_lat + 1
+            jj = j! - lbnd_lat + 1
             coordY_E(j) = YEdge(1,jj)
         enddo
-        write(6,*) "dbg hplin 2/20/20: 1065"
         ASSERT_(RC==ESMF_SUCCESS)
 
         if(masterproc) then
@@ -1070,5 +1071,52 @@ contains
         endif
 
     end subroutine HCO_Grid_ESMF_CreateHCO
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_ESMF_CreateHCOField
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateHCO field creates an ESMF
+!  2D or 3D field on the HEMCO grid, excluding periodic points.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_ESMF_CreateHCOField( field, grid, name, nlev, RC )
+!
+! !USES:
+!
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Grid), intent(in)            :: grid
+        character(len=*), intent(in)           :: name
+        integer, intent(in)                    :: nlev    ! nlev==0?2d:3d
+!
+! !OUTPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(out)          :: field
+        integer, intent(out)                   :: RC
+!
+! !REMARKS:
+!  If nlev == 0, field is 2D (i, j), otherwise 3D. 3rd dimension is ungridded.
+!
+! !REVISION HISTORY:
+!  21 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCOField'
+
+    end subroutine HCO_Grid_ESMF_CreateHCOField
 !EOC
 end module hco_esmf_grid
