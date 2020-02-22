@@ -23,6 +23,7 @@ module hco_esmf_grid
     ! ESMF types
     use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid, ESMF_Grid
     use ESMF,                     only: ESMF_Field
+    use ESMF,                     only: ESMF_RouteHandle
     use ESMF,                     only: ESMF_SUCCESS
 
     ! MPI
@@ -31,6 +32,7 @@ module hco_esmf_grid
     ! Floating point type.
     ! FIXME: May change to HEMCO precision later down the line
     use shr_kind_mod,             only: r8 => shr_kind_r8
+    use ESMF,                     only: ESMF_KIND_I4
 
     implicit none
     private
@@ -44,6 +46,7 @@ module hco_esmf_grid
 ! !PRIVATE MEMBER FUNCTIONS:
 !
     private       :: HCO_Grid_ESMF_CreateCAM
+    private       :: HCO_Grid_ESMF_CreateCAMField    ! Create field on CAM physics mesh
     private       :: HCO_Grid_ESMF_CreateHCO         ! Create HEMCO lat-lon grid in ESMF
     private       :: HCO_Grid_ESMF_CreateHCOField    ! Create field on HEMCO ll grid
 
@@ -167,12 +170,25 @@ module hco_esmf_grid
 !
 ! !PRIVATE TYPES:
 !
-    type(ESMF_Grid)      :: HCO_Grid
-    type(ESMF_Grid)      :: HCO2CAM_Grid
-    type(ESMF_Mesh)      :: CAM_PhysMesh        ! Copy of CAM physics mesh
-    type(ESMF_DistGrid)  :: CAM_DistGrid        ! DE-local allocation descriptor DistGrid (2D)
+    ! ESMF grid and meshes for regridding
+    type(ESMF_Grid)            :: HCO_Grid
+    type(ESMF_Grid)            :: HCO2CAM_Grid
+    type(ESMF_Mesh)            :: CAM_PhysMesh        ! Copy of CAM physics mesh decomposition
+    type(ESMF_DistGrid)        :: CAM_DistGrid        ! DE-local allocation descriptor DistGrid (2D)
 
-    integer              :: cam_last_atm_id     ! Last CAM atmospheric ID
+    ! ESMF fields for mapping between HEMCO to CAM fields
+    type(ESMF_Field)           :: CAM_2DFld, CAM_3DFld
+    type(ESMF_Field)           :: HCO_2DFld, HCO_3DFld
+    type(ESMF_Field)           :: HCO2CAM_2DFld, HCO2CAM_3DFld
+
+    ! Used to generate regridding weights
+    integer                    :: cam_last_atm_id     ! Last CAM atmospheric ID
+
+    ! Regridding weight route handles
+    type(ESMF_RouteHandle)     :: HCO2CAM_RouteHandle_3D, &
+                                  HCO2CAM_RouteHandle_2D, &
+                                  CAM2HCO_RouteHandle_3D, &
+                                  CAM2HCO_RouteHandle_2D
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -660,6 +676,12 @@ contains
         use spmd_utils,         only: masterproc
 
         use cam_instance,       only: atm_id
+
+        ! ESMF
+        use ESMF,               only: ESMF_FieldRegridStore
+        use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE
+        use ESMF,               only: ESMF_POLEMETHOD_ALLAVG, ESMF_POLEMETHOD_NONE
+        use ESMF,               only: ESMF_EXTRAPMETHOD_NEAREST_IDAVG
 !
 ! !OUTPUT PARAMETERS:
 !
@@ -682,9 +704,14 @@ contains
 ! !LOCAL VARIABLES:
 !
         character(len=*), parameter :: subname = 'HCO_Grid_UpdateRegrid'
+        integer                     :: smm_srctermproc, smm_pipelinedep
 
         ! Assume success
         RC = ESMF_SUCCESS
+
+        ! Parameters for ESMF RouteHandle (taken from ionos interface)
+        smm_srctermproc =  0
+        smm_pipelinedep = 16
 
         ! Check if we need to update
         if(cam_last_atm_id == atm_id) then
@@ -697,15 +724,74 @@ contains
         cam_last_atm_id = atm_id
 
         ! Create CAM physics mesh...
-        call HCO_Grid_ESMF_CreateCAM( RC )
+        call HCO_Grid_ESMF_CreateCAM(RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
         ! Create HEMCO grid in ESMF format
-        call HCO_Grid_ESMF_CreateHCO( RC )
+        call HCO_Grid_ESMF_CreateHCO(RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
+        ! Create empty fields on the HEMCO grid and CAM physics mesh
+        ! used for later regridding
+        call HCO_Grid_ESMF_CreateCAMField(CAM_2DFld, CAM_PhysMesh, 'HCO_PHYS_2DFLD', 0, RC)
+        call HCO_Grid_ESMF_CreateCAMField(CAM_3DFld, CAM_PhysMesh, 'HCO_PHYS_3DFLD', LM, RC)
 
+        call HCO_Grid_ESMF_CreateHCOField(HCO_2DFld, HCO_Grid, 'HCO_2DFLD', 0, RC)
+        call HCO_Grid_ESMF_CreateHCOField(HCO_3DFld, HCO_Grid, 'HCO_3DFLD', LM, RC)
+        call HCO_Grid_ESMF_CreateHCOField(HCO2CAM_2DFld, HCO2CAM_Grid, 'HCO2CAM_2DFLD', 0, RC)
+        call HCO_Grid_ESMF_CreateHCOField(HCO2CAM_3DFld, HCO2CAM_Grid, 'HCO2CAM_3DFLD', LM, RC)
+        ASSERT_(RC==ESMF_SUCCESS)
 
+        ! Create and store ESMF route handles for regridding CAM <-> HCO
+        ! CAM -> HCO 3-D
+        call ESMF_FieldRegridStore(                                &
+            srcField=CAM_3DFld, dstField=HCO_3DFld,                &
+            regridMethod=ESMF_REGRIDMETHOD_BILINEAR,               &
+            poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
+            extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
+            routeHandle=CAM2HCO_RouteHandle_3D,                    &
+            ! factorIndexList=factorIndexList,                       &
+            ! factorList=factorList,                                 &
+            srcTermProcessing=smm_srctermproc,                     &
+            pipelineDepth=smm_pipelinedep, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! CAM -> HCO 2-D
+        call ESMF_FieldRegridStore(                                &
+            srcField=CAM_2DFld, dstField=HCO_2DFld,                &
+            regridMethod=ESMF_REGRIDMETHOD_BILINEAR,               &
+            poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
+            extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
+            routeHandle=CAM2HCO_RouteHandle_2D,                    &
+            srcTermProcessing=smm_srctermproc,                     &
+            pipelineDepth=smm_pipelinedep, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! HCO -> CAM 3-D
+        ! 3-D regridding cannot be done on a stagger other than center
+        ! (as of ESMF 8.0.0 in ESMF_FieldRegrid.F90::993)
+        call ESMF_FieldRegridStore(                                &
+            srcField=HCO2CAM_3DFld, dstField=CAM_3DFld,            &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
+            poleMethod=ESMF_POLEMETHOD_NONE,                       &
+            routeHandle=HCO2CAM_RouteHandle_3D,                    &
+            srcTermProcessing=smm_srctermproc,                     &
+            pipelineDepth=smm_pipelinedep, rc=RC)
+        write(6,*) "fieldregridstore 3, rc", RC
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! HCO -> CAM 2-D
+        call ESMF_FieldRegridStore(                                &
+            srcField=HCO2CAM_2DFld, dstField=CAM_2DFld,            &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
+            poleMethod=ESMF_POLEMETHOD_NONE,                       &
+            routeHandle=HCO2CAM_RouteHandle_2D,                    &
+            srcTermProcessing=smm_srctermproc,                     &
+            pipelineDepth=smm_pipelinedep, rc=RC)
+        write(6,*) "fieldregridstore 2, rc", RC
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! Finished updating regrid routines
     end subroutine HCO_Grid_UpdateRegrid
 !EOC
 !------------------------------------------------------------------------------
@@ -1077,25 +1163,30 @@ contains
 !------------------------------------------------------------------------------
 !BOP
 !
-! !IROUTINE: HCO_Grid_ESMF_CreateHCOField
+! !IROUTINE: HCO_Grid_ESMF_CreateCAMField
 !
-! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateHCO field creates an ESMF
-!  2D or 3D field on the HEMCO grid, excluding periodic points.
+! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateCAMField creates an ESMF
+!  2D or 3D field on the mesh representation of CAM physics decomp.
 !\\
 !\\
 ! !INTERFACE:
 !
-    subroutine HCO_Grid_ESMF_CreateHCOField( field, grid, name, nlev, RC )
+    subroutine HCO_Grid_ESMF_CreateCAMField( field, mesh, name, nlev, RC )
 !
 ! !USES:
 !
         ! MPI Properties from CAM
         use cam_logfile,        only: iulog
         use spmd_utils,         only: masterproc
+
+        use ESMF,               only: ESMF_TYPEKIND_R8
+        use ESMF,               only: ESMF_MESHLOC_ELEMENT
+        use ESMF,               only: ESMF_ArraySpec, ESMF_ArraySpecSet
+        use ESMF,               only: ESMF_FieldCreate
 !
 ! !INPUT PARAMETERS:
 !
-        type(ESMF_Grid), intent(in)            :: grid
+        type(ESMF_Mesh), intent(in)            :: mesh
         character(len=*), intent(in)           :: name
         integer, intent(in)                    :: nlev    ! nlev==0?2d:3d
 !
@@ -1115,8 +1206,106 @@ contains
 !
 ! !LOCAL VARIABLES:
 !
-        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCOField'
+        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateCAMField'
+        type(ESMF_ArraySpec)        :: arrayspec
 
+        if(nlev > 0) then
+            ! 3D field (i,j,k) with nondistributed vertical
+            call ESMF_ArraySpecSet(arrayspec, 2, ESMF_TYPEKIND_R8, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+
+            field = ESMF_FieldCreate(mesh, arrayspec,           &
+                                     name=name,                 &
+                                     ungriddedLBound=(/1/),     &
+                                     ungriddedUBound=(/nlev/),  &
+                                     gridToFieldMap=(/2/),      & ! mapping between grid/field dims ??
+                                     meshloc=ESMF_MESHLOC_ELEMENT, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+        else
+            ! 2D field (i,j)
+            call ESMF_ArraySpecSet(arrayspec, 1, ESMF_TYPEKIND_R8, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+
+            field = ESMF_FieldCreate(mesh, arrayspec,           &
+                                     name=name,                 &
+                                     meshloc=ESMF_MESHLOC_ELEMENT, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+        endif
+    end subroutine HCO_Grid_ESMF_CreateCAMField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_ESMF_CreateHCOField
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_ESMF\_CreateHCO field creates an ESMF
+!  2D or 3D field on the HEMCO grid, excluding periodic points.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_ESMF_CreateHCOField( field, grid, name, nlev, RC )
+!
+! !USES:
+!
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+
+        use ESMF,               only: ESMF_TYPEKIND_R8
+        use ESMF,               only: ESMF_STAGGERLOC_CENTER, ESMF_STAGGERLOC_CORNER
+        use ESMF,               only: ESMF_ArraySpec, ESMF_ArraySpecSet
+        use ESMF,               only: ESMF_FieldCreate
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Grid), intent(in)            :: grid
+        character(len=*), intent(in)           :: name
+        integer, intent(in)                    :: nlev    ! nlev==0?2d:3d
+!
+! !OUTPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(out)          :: field
+        integer, intent(out)                   :: RC
+!
+! !REMARKS:
+!  If nlev == 0, field is 2D (i, j), otherwise 3D. 3rd dimension is ungridded.
+!  The grid input parameter accepts both HCO_Grid and HCO2CAM_Grid.
+!
+! !REVISION HISTORY:
+!  21 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCOField'
+        type(ESMF_ArraySpec)        :: arrayspec
+
+        if(nlev > 0) then
+            ! 3D field (i,j,k) with nondistributed vertical
+            call ESMF_ArraySpecSet(arrayspec, 3, ESMF_TYPEKIND_R8, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+
+            field = ESMF_FieldCreate(grid, arrayspec,           &
+                                     name=name,                 &
+                                     ungriddedLBound=(/1/),     &
+                                     ungriddedUBound=(/nlev/),  &
+                                     staggerloc=ESMF_STAGGERLOC_CENTER, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+        else
+            ! 2D field (i,j)
+            call ESMF_ArraySpecSet(arrayspec, 2, ESMF_TYPEKIND_R8, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+
+            field = ESMF_FieldCreate(grid, arrayspec,           &
+                                     name=name,                 &
+                                     staggerloc=ESMF_STAGGERLOC_CENTER, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+        endif
     end subroutine HCO_Grid_ESMF_CreateHCOField
 !EOC
 end module hco_esmf_grid
