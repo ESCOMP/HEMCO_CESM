@@ -246,10 +246,13 @@ contains
         ! Setup a lat-lon "HEMCO" intermediate grid
         !-----------------------------------------------------------------------
 
-        ! TODO: For now, hardcode using 2x2.5 grid for testing. (hplin, 2/12/20)
+        ! TODO: For now, hardcode using 1x1 grid for testing with fv0.9x1.25.
+        ! This provides a sufficient # of grid boxes acceptable for decomp
+        ! on the default Cheyenne configuration. (hplin, 2/21/20)
+
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
-        call HCO_Grid_Init (IM_in = 144, JM_in = 91, nPET_in = npes, RC=RC)
+        call HCO_Grid_Init (IM_in = 360, JM_in = 181, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
         if(masterproc) then

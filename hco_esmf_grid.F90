@@ -32,7 +32,7 @@ module hco_esmf_grid
     ! Floating point type.
     ! FIXME: May change to HEMCO precision later down the line
     use shr_kind_mod,             only: r8 => shr_kind_r8
-    use ESMF,                     only: ESMF_KIND_I4
+    use ESMF,                     only: ESMF_KIND_I4, ESMF_KIND_R8
 
     implicit none
     private
@@ -146,6 +146,7 @@ module hco_esmf_grid
 
     integer, public, allocatable :: HCO_petTable(:,:)! 2D table of tasks (dim'l nPET_lon+2, ..lat+2)
                                                      ! extra left and right used for halos
+    integer, public, allocatable :: HCO_petMap(:,:,:)! PETmap for ESMF
 
     ! -- Private to MPI process --
     ! Note L dimension (levs) not distributed
@@ -172,14 +173,12 @@ module hco_esmf_grid
 !
     ! ESMF grid and meshes for regridding
     type(ESMF_Grid)            :: HCO_Grid
-    type(ESMF_Grid)            :: HCO2CAM_Grid
     type(ESMF_Mesh)            :: CAM_PhysMesh        ! Copy of CAM physics mesh decomposition
     type(ESMF_DistGrid)        :: CAM_DistGrid        ! DE-local allocation descriptor DistGrid (2D)
 
     ! ESMF fields for mapping between HEMCO to CAM fields
     type(ESMF_Field)           :: CAM_2DFld, CAM_3DFld
     type(ESMF_Field)           :: HCO_2DFld, HCO_3DFld
-    type(ESMF_Field)           :: HCO2CAM_2DFld, HCO2CAM_3DFld
 
     ! Used to generate regridding weights
     integer                    :: cam_last_atm_id     ! Last CAM atmospheric ID
@@ -418,10 +417,17 @@ contains
         ! The code below from edyn_geogrid may not be generic enough for that
         ! need, so we might do nPET_lon = 1 for now. (See code path below)
         ! (hplin, 2/13/20)
+
+        ! It seems like ESMF conservative regridding will not work with DE < 2
+        ! so the distribution must assign more than 1 lat and lon per PET.
+        ! The code has been updated accordingly. (hplin, 2/22/20)
         do nPET_lon = 2, IM
             nPET_lat = nPET / nPET_lon
             if( nPET_lon * nPET_lat == nPET .and. nPET_lon .le. IM .and. nPET_lat .le. JM ) then
-                exit
+                ! Enforce more than 2-width lon and lat...
+                if(int(IM / nPET_lon) > 1 .and. int(JM / nPET_lat) > 1) then
+                    exit
+                endif
             endif
         enddo
         ! nPET_lon = 1
@@ -436,6 +442,7 @@ contains
 
             if(masterproc) then
                 write(iulog,*) "HEMCO: HCO_Grid_Init failed to find a secondary decomp."
+                write(iulog,*) "Using 1-d latitude decomp. This may fail with ESMF regrid."
             endif
         endif
 
@@ -515,6 +522,10 @@ contains
         allocate(HCO_petTable(-1:nPET_lon, -1:nPET_lat), stat=RC)
         ASSERT_(RC==0)
 
+        ! Allocate PET map for ESMF
+        allocate(HCO_petMap(nPET_lon, nPET_lat, 1))
+        ASSERT_(RC==0)
+
         ! 2D table of tasks communicates to MPI_PROC_NULL by default so talking
         ! to that PID has no effect in MPI comm
         HCO_petTable(:,:) = MPI_PROC_NULL
@@ -526,6 +537,7 @@ contains
         do J = 0, nPET_lat-1
             do I = 0, nPET_lon-1
                 HCO_petTable(I, J) = N
+                HCO_petMap(I+1, J+1, 1) = N   ! PETmap indices based off 1, so +1 here
                 if(iam == N) then
                     my_ID_I = I
                     my_ID_J = J ! Found my place in the PET table
@@ -570,6 +582,12 @@ contains
             HCO_Tasks(N)%JS   = my_JS
             HCO_Tasks(N)%JE   = my_JE       ! start and end latitude  dim'l index
         enddo
+
+        ! For root task write out a debug output to make sure
+        if(masterproc) then
+            write(iulog,*) ">> HEMCO: Root task committing to sub-decomp"
+            write(iulog,*) ">> my_IM,JM,IS,IE,JS,JE", my_IM, my_JM, my_IS, my_IE, my_JS, my_JE
+        endif
 
         !-----------------------------------------------------------------------
         ! Distribute among parallelization in MPI 3: Distribute all-to-all task info
@@ -682,6 +700,8 @@ contains
         use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE
         use ESMF,               only: ESMF_POLEMETHOD_ALLAVG, ESMF_POLEMETHOD_NONE
         use ESMF,               only: ESMF_EXTRAPMETHOD_NEAREST_IDAVG
+
+        use ESMF,               only: ESMF_FieldGet
 !
 ! !OUTPUT PARAMETERS:
 !
@@ -695,8 +715,12 @@ contains
 !  This allows the function HCO_Grid_UpdateRegrid be called both in init and run
 !  without performance / memory repercussions (hopefully...)
 !
+!  Maybe we can use CONSERVE_2ND order for better accuracy in the future. To be tested.
+!
 ! !REVISION HISTORY:
 !  20 Feb 2020 - H.P. Lin    - Initial version
+!  23 Feb 2020 - H.P. Lin    - Finalized regridding handles, bilinear for CAM-HCO and
+!                              conservative (1st order) for HCO-CAM.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -705,6 +729,9 @@ contains
 !
         character(len=*), parameter :: subname = 'HCO_Grid_UpdateRegrid'
         integer                     :: smm_srctermproc, smm_pipelinedep
+        integer                     :: lbnd_hco(3), ubnd_hco(3)   ! 3-d bounds of HCO field
+
+        real(r8), pointer           :: fptr(:,:,:) ! debug
 
         ! Assume success
         RC = ESMF_SUCCESS
@@ -733,28 +760,23 @@ contains
 
         ! Create empty fields on the HEMCO grid and CAM physics mesh
         ! used for later regridding
+
+        ! FIXME: Destroy fields before creating to prevent memory leak? ESMF_Destroy
+        ! requires the field to be present (so no silent destruction) (hplin, 2/21/20)
         call HCO_Grid_ESMF_CreateCAMField(CAM_2DFld, CAM_PhysMesh, 'HCO_PHYS_2DFLD', 0, RC)
         call HCO_Grid_ESMF_CreateCAMField(CAM_3DFld, CAM_PhysMesh, 'HCO_PHYS_3DFLD', LM, RC)
 
         call HCO_Grid_ESMF_CreateHCOField(HCO_2DFld, HCO_Grid, 'HCO_2DFLD', 0, RC)
         call HCO_Grid_ESMF_CreateHCOField(HCO_3DFld, HCO_Grid, 'HCO_3DFLD', LM, RC)
-        call HCO_Grid_ESMF_CreateHCOField(HCO2CAM_2DFld, HCO2CAM_Grid, 'HCO2CAM_2DFLD', 0, RC)
-        call HCO_Grid_ESMF_CreateHCOField(HCO2CAM_3DFld, HCO2CAM_Grid, 'HCO2CAM_3DFLD', LM, RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        ! Create and store ESMF route handles for regridding CAM <-> HCO
-        ! CAM -> HCO 3-D
-        call ESMF_FieldRegridStore(                                &
-            srcField=CAM_3DFld, dstField=HCO_3DFld,                &
-            regridMethod=ESMF_REGRIDMETHOD_BILINEAR,               &
-            poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
-            extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
-            routeHandle=CAM2HCO_RouteHandle_3D,                    &
-            ! factorIndexList=factorIndexList,                       &
-            ! factorList=factorList,                                 &
-            srcTermProcessing=smm_srctermproc,                     &
-            pipelineDepth=smm_pipelinedep, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
+        if(masterproc) then
+            write(iulog,*) ">> HEMCO: HCO_PHYS and HCO_ fields initialized successfully"
+            call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
+                               computationalLBound=lbnd_hco,         &
+                               computationalUBound=ubnd_hco, rc=RC)
+            write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ubnd = (", ubnd_hco, ")"
+        endif
 
         ! CAM -> HCO 2-D
         call ESMF_FieldRegridStore(                                &
@@ -767,29 +789,43 @@ contains
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        ! HCO -> CAM 3-D
-        ! 3-D regridding cannot be done on a stagger other than center
-        ! (as of ESMF 8.0.0 in ESMF_FieldRegrid.F90::993)
+        ! Create and store ESMF route handles for regridding CAM <-> HCO
+        ! CAM -> HCO 3-D
         call ESMF_FieldRegridStore(                                &
-            srcField=HCO2CAM_3DFld, dstField=CAM_3DFld,            &
-            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
-            poleMethod=ESMF_POLEMETHOD_NONE,                       &
-            routeHandle=HCO2CAM_RouteHandle_3D,                    &
+            srcField=CAM_3DFld, dstField=HCO_3DFld,                &
+            regridMethod=ESMF_REGRIDMETHOD_BILINEAR,               &
+            poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
+            extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
+            routeHandle=CAM2HCO_RouteHandle_3D,                    &
             srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
-        write(6,*) "fieldregridstore 3, rc", RC
         ASSERT_(RC==ESMF_SUCCESS)
 
         ! HCO -> CAM 2-D
         call ESMF_FieldRegridStore(                                &
-            srcField=HCO2CAM_2DFld, dstField=CAM_2DFld,            &
+            srcField=HCO_2DFld, dstField=CAM_2DFld,                &
             regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_2D,                    &
             srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
-        write(6,*) "fieldregridstore 2, rc", RC
         ASSERT_(RC==ESMF_SUCCESS)
+
+        ! HCO -> CAM 3-D
+        ! 3-D conserv. regridding cannot be done on a stagger other than center
+        ! (as of ESMF 8.0.0 in ESMF_FieldRegrid.F90::993)
+        call ESMF_FieldRegridStore(                                &
+            srcField=HCO_3DFld, dstField=CAM_3DFld,                &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
+            poleMethod=ESMF_POLEMETHOD_NONE,                       &
+            routeHandle=HCO2CAM_RouteHandle_3D,                    &
+            srcTermProcessing=smm_srctermproc,                     &
+            pipelineDepth=smm_pipelinedep, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> HEMCO: FieldRegridStore four-way ready"
+        endif
 
         ! Finished updating regrid routines
     end subroutine HCO_Grid_UpdateRegrid
@@ -1011,9 +1047,22 @@ contains
         integer, intent(out)                   :: RC
 !
 ! !REMARKS:
+!  We initialize TWO coordinates here for the HEMCO grid. Both the center and corner
+!  staggering information needs to be added to the grid, or ESMF_FieldRegridStore will
+!  fail. It is a rather weird implementation, as ESMF_FieldRegridStore only accepts
+!  the coordinate in CENTER staggering, but the conversion to mesh is in CORNER.
+!
+!  So both coordinates need to be specified even though (presumably?) the center field
+!  is regridded once the route handle is generated. This remains to be seen but at this
+!  point only the following "duplicated" code is the correct implementation for
+!  conservative regridding handles to be generated properly. 
+!
+!  Roughly 9 hours of debugging and reading the ESMF documentation and code
+!  were wasted here. (hplin, 2/23/20)
 !
 ! !REVISION HISTORY:
 !  20 Feb 2020 - H.P. Lin    - Initial version
+!  22 Feb 2020 - H.P. Lin    - Support curvilinear in ESMF format (note Map_A2A)
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1022,13 +1071,12 @@ contains
 !
         character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCO'
 
-        integer                     :: i, j, n, ii, jj
-        integer                     :: lbnd_lat, ubnd_lat, lbnd_lon, ubnd_lon
-        integer                     :: lbnd(1), ubnd(1)
+        integer                     :: i, j, n
+        integer                     :: lbnd(2), ubnd(2)
         integer                     :: nlons_task(nPET_lon) ! # lons per task
         integer                     :: nlats_task(nPET_lat) ! # lats per task
-        real(r8), pointer :: coordX(:), coordY(:)
-        real(r8), pointer :: coordX_E(:), coordY_E(:)
+        real(ESMF_KIND_R8), pointer :: coordX(:,:), coordY(:,:)
+        real(ESMF_KIND_R8), pointer :: coordX_E(:,:), coordY_E(:,:)
 
         !-----------------------------------------------------------------------
         ! Task distribution for ESMF grid
@@ -1041,6 +1089,15 @@ contains
             endif
             enddo loop
         enddo
+
+        ! Exclude periodic points for source grids
+        do n = 0, nPET-1
+            if (HCO_Tasks(n)%ID_I == nPET_lon-1) then ! Eastern edge
+                nlons_task(HCO_Tasks(n)%ID_I + 1) = HCO_Tasks(n)%IM - 1
+                ! overwrites %IM above...
+            endif
+        enddo
+
         do j = 1, nPET_lat
             loop1: do n = 0, nPET-1
             if (HCO_Tasks(n)%ID_J == j-1) then
@@ -1055,24 +1112,19 @@ contains
         !-----------------------------------------------------------------------
         ! Create pole-based 2D geographic source grid
         HCO_Grid = ESMF_GridCreate1PeriDim(                            &
-                        countsPerDEDim1=nlons_task, coordDep1=(/1/),   &
-                        countsPerDEDim2=nlats_task, coordDep2=(/2/),   &
+                        countsPerDEDim1=nlons_task, coordDep1=(/1,2/), &
+                        countsPerDEDim2=nlats_task, coordDep2=(/1,2/), &
                         indexflag=ESMF_INDEX_GLOBAL,                   &
-                        minIndex=(/1,1/), rc=RC)
+                        petmap=HCO_petMap,                             &
+                        minIndex=(/1,1/),                              &
+                        rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
         call ESMF_GridAddCoord(HCO_Grid, staggerloc=ESMF_STAGGERLOC_CENTER, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        HCO2CAM_Grid = ESMF_GridCreate1PeriDim(                        &
-                        countsPerDEDim1=nlons_task, coordDep1=(/1/),   &
-                        countsPerDEDim2=nlats_task, coordDep2=(/2/),   &
-                        indexflag=ESMF_INDEX_GLOBAL,                   &
-                        minIndex=(/1,1/), rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        call ESMF_GridAddCoord(HCO2CAM_Grid, staggerloc=ESMF_STAGGERLOC_CORNER, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
+        call ESMF_GridAddCoord(HCO_Grid, staggerloc=ESMF_STAGGERLOC_CORNER, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)  ! why two grids? see remark above (hplin, 2/23/20)
 
         !-----------------------------------------------------------------------
         ! Get pointer and set coordinates - CENTER HEMCO GRID
@@ -1087,19 +1139,23 @@ contains
 
         ! Note: Compute bounds are not starting from 1 almost surely
         ! and they should be on the same decomp as the global elems.
-        ! So they should be read through the global indices (ii = i, jj = j)
+        ! So they should be read through the global indices
         ! and not offset ones (a la WRF) (hplin, 2/21/20)
-
-        lbnd_lon = lbnd(1)
-        ubnd_lon = ubnd(1)
-        do i = lbnd_lon, ubnd_lon
-            ! Longitude centers: assume longitude centers are regular across grid.
-            ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
-            ! (hplin, 2/20/20)
-            ii = i! - lbnd_lon + 1
-            coordX(i) = XMid(ii,1)
+        do j = lbnd(2), ubnd(2)
+            do i = lbnd(1), ubnd(1)
+                coordX(i, j) = XMid(i, j)
+            enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
+
+        ! Sanity checks here for coordinate staggering
+        ! write(iulog,*) ">> [X] IS, IE, JS, JE = ", my_IS, my_IE, my_JS, my_JE, &
+        !              "IM, JM, sizeX1,2 = ", & 
+        !      my_IM, my_JM, size(coordX, 1), size(coordX, 2)
+        ! Off by one in periodic dim'n, don't assert I dim here
+        ! ASSERT_((ubnd(1) - lbnd(1))==(my_IE-my_IS))
+        ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
+
 
         call ESMF_GridGetCoord(HCO_Grid, coordDim=2, localDE=0,        &
                                computationalLBound=lbnd,               &
@@ -1107,53 +1163,72 @@ contains
                                farrayPtr=coordY,                       &
                                staggerloc=ESMF_STAGGERLOC_CENTER,      &
                                rc=RC)
-        lbnd_lat = lbnd(1)
-        ubnd_lat = ubnd(1)
-        do j = lbnd_lat, ubnd_lat
-            ! Latitude centers: Same caveat applies.
-            jj = j! - lbnd_lat + 1
-            coordY(j) = YMid(1,jj)
+
+        ! Sanity checks here for coordinate staggering
+        ! write(iulog,*) ">> [Y] IS, IE, JS, JE = ", my_IS, my_IE, my_JS, my_JE, &
+        !              "IM, JM, sizeY1,2 = ", & 
+        !      my_IM, my_JM, size(coordY, 1), size(coordY, 2)
+        ! ASSERT_((ubnd(1) - lbnd(1))==(my_IE-my_IS))
+        ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
+
+        do j = lbnd(2), ubnd(2)
+            do i = lbnd(1), ubnd(1)
+                coordY(i, j) = YMid(i, j)
+            enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> HCO_Grid_ESMF_CreateHCO [Ctr] ok"
+            write(iulog,*) ">> lbnd,ubnd_lon = ", lbnd(1), ubnd(1)
+            write(iulog,*) ">> lbnd,ubnd_lat = ", lbnd(2), ubnd(2)
+            write(iulog,*) ">>   IS, IE, JS, JE = ", my_IS, my_IE, my_JS, my_JE
+            write(iulog,*) ">>   IM, JM, sizeX1,2 sizeY1,2 = ", & 
+               my_IM, my_JM, size(coordX, 1), size(coordX, 2), size(coordY, 1), size(coordY, 2)
+        endif
 
         !-----------------------------------------------------------------------
         ! Get pointer and set coordinates - CORNER HEMCO GRID
         !-----------------------------------------------------------------------
-        call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=1, localDE=0,    &
+        call ESMF_GridGetCoord(HCO_Grid, coordDim=1, localDE=0,        &
                                computationalLBound=lbnd,               &
                                computationalUBound=ubnd,               &
                                farrayPtr=coordX_E,                     &
                                staggerloc=ESMF_STAGGERLOC_CORNER,      &
                                rc=RC)
-        ! Longitude range -180.0, 180.0 is XEdge for CORNER staggering
-        lbnd_lon = lbnd(1)
-        ubnd_lon = ubnd(1)
-        do i = lbnd_lon, ubnd_lon
-            ! Longitude edges: assume longitude edges are regular across grid.
-            ! Only holds for regular lat-lon. If this grid is changed later, buyer beware.
-            ! (hplin, 2/20/20)
-            ii = i! - lbnd_lon + 1
-            coordX_E(i) = XEdge(ii,1)
+
+        ! Note: Compute bounds are not starting from 1 almost surely
+        ! and they should be on the same decomp as the global elems.
+        ! So they should be read through the global indices
+        ! and not offset ones (a la WRF) (hplin, 2/21/20)
+        do j = lbnd(2), ubnd(2)
+            do i = lbnd(1), ubnd(1)
+                coordX_E(i, j) = XEdge(i, j)
+            enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
 
-        call ESMF_GridGetCoord(HCO2CAM_Grid, coordDim=2, localDE=0,    &
+        call ESMF_GridGetCoord(HCO_Grid, coordDim=2, localDE=0,        &
                                computationalLBound=lbnd,               &
                                computationalUBound=ubnd,               &
                                farrayPtr=coordY_E,                     &
                                staggerloc=ESMF_STAGGERLOC_CORNER,      &
                                rc=RC)
-        lbnd_lat = lbnd(1)
-        ubnd_lat = ubnd(1)
-        do j = lbnd_lat, ubnd_lat
-            ! Latitude edges: Same caveat applies.
-            jj = j! - lbnd_lat + 1
-            coordY_E(j) = YEdge(1,jj)
+
+        do j = lbnd(2), ubnd(2)
+            do i = lbnd(1), ubnd(1)
+                coordY_E(i, j) = YEdge(i, j)
+            enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
 
         if(masterproc) then
-            write(iulog,*) ">> HCO_Grid_ESMF_CreateHCO ok"
+            write(iulog,*) ">> HCO_Grid_ESMF_CreateHCO [Cnr] ok"
+            write(iulog,*) ">> lbnd,ubnd_lon = ", lbnd(1), ubnd(1)
+            write(iulog,*) ">> lbnd,ubnd_lat = ", lbnd(2), ubnd(2)
+            write(iulog,*) ">>   IS, IE, JS, JE = ", my_IS, my_IE, my_JS, my_JE
+            write(iulog,*) ">>   IM, JM, sizeX1,2 sizeY1,2 = ", & 
+               my_IM, my_JM, size(coordX, 1), size(coordX, 2), size(coordY, 1), size(coordY, 2)
         endif
 
     end subroutine HCO_Grid_ESMF_CreateHCO
@@ -1255,7 +1330,7 @@ contains
         use spmd_utils,         only: masterproc
 
         use ESMF,               only: ESMF_TYPEKIND_R8
-        use ESMF,               only: ESMF_STAGGERLOC_CENTER, ESMF_STAGGERLOC_CORNER
+        use ESMF,               only: ESMF_STAGGERLOC_CENTER
         use ESMF,               only: ESMF_ArraySpec, ESMF_ArraySpecSet
         use ESMF,               only: ESMF_FieldCreate
 !
