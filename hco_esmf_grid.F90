@@ -42,6 +42,12 @@ module hco_esmf_grid
 !
     public        :: HCO_Grid_Init
     public        :: HCO_Grid_UpdateRegrid
+
+    ! public        :: HCO_Grid_HCO2CAM_2D             ! Regrid HEMCO to CAM mesh on 2D field
+    public        :: HCO_Grid_HCO2CAM_3D             !                       ...on 3D field
+    ! public        :: HCO_Grid_CAM2HCO_2D             ! Regrid CAM mesh to HEMCO on 2D field
+    public        :: HCO_Grid_CAM2HCO_3D             !                       ...on 3D field
+
 !
 ! !PRIVATE MEMBER FUNCTIONS:
 !
@@ -49,6 +55,15 @@ module hco_esmf_grid
     private       :: HCO_Grid_ESMF_CreateCAMField    ! Create field on CAM physics mesh
     private       :: HCO_Grid_ESMF_CreateHCO         ! Create HEMCO lat-lon grid in ESMF
     private       :: HCO_Grid_ESMF_CreateHCOField    ! Create field on HEMCO ll grid
+
+    private       :: HCO_ESMF_Set2DHCO               ! Set ESMF field with 2D HEMCO data
+    private       :: HCO_ESMF_Set3DHCO               ! Set ESMF field with 3D HEMCO data
+    private       :: HCO_ESMF_Set2DCAM               ! Set ESMF field with 2D CAM mesh data
+    private       :: HCO_ESMF_Set3DCAM               ! Set ESMF field with 3D CAM mesh data
+
+    private       :: HCO_ESMF_Get1DField             ! Retrieve 1D ESMF field pointer
+    private       :: HCO_ESMF_Get2DField             ! Retrieve 2D ESMF field pointer
+    private       :: HCO_ESMF_Get3DField             ! Retrieve 3D ESMF field pointer
 
 ! !REMARKS:
 !
@@ -63,6 +78,12 @@ module hco_esmf_grid
 !  grid as they only differ by a grid staggering configuration (center and corner).
 !  Thus they are merged into one routine and write to two grids, HCO_Grid and HCO2CAM_Grid.
 !  (hplin, 2/20/20)
+!
+!  The HEMCO grid is initialized in ESMF with 1 periodic dim on the longitude.
+!  It remains to be seen whether this is necessary and validation of the regridder's
+!  robustness is necessary (hplin, 2/23/20)
+!
+!  Only 3-D regridding implemented for now. (hplin, 2/24/20)
 !
 !  ---------------------- BELOW ARE SIDE REMARKS ---------------------------------
 !  This module was written by hplin on a gloomy day (as usual) in Cambridge/Boston
@@ -156,6 +177,8 @@ module hco_esmf_grid
 
     integer, public, protected :: my_ID              ! my task ID in HCO_Task
     integer, public, protected :: my_ID_I, my_ID_J   ! mytidi, mytidj coord for current task
+
+    integer, public, protected :: my_CE              ! # of CAM ncols in this task
 
     type HCO_Task
         integer  :: ID          ! identifier
@@ -693,6 +716,8 @@ contains
         use spmd_utils,         only: iam
         use spmd_utils,         only: masterproc
 
+        use phys_grid,          only: begchunk, endchunk, get_ncols_p
+
         use cam_instance,       only: atm_id
 
         ! ESMF
@@ -729,9 +754,12 @@ contains
 !
         character(len=*), parameter :: subname = 'HCO_Grid_UpdateRegrid'
         integer                     :: smm_srctermproc, smm_pipelinedep
-        integer                     :: lbnd_hco(3), ubnd_hco(3)   ! 3-d bounds of HCO field
 
-        real(r8), pointer           :: fptr(:,:,:) ! debug
+        integer                     :: chnk
+
+        ! Debug only
+        ! integer                     :: lbnd_hco(3), ubnd_hco(3)   ! 3-d bounds of HCO field
+        ! real(r8), pointer           :: fptr(:,:,:) ! debug
 
         ! Assume success
         RC = ESMF_SUCCESS
@@ -754,6 +782,12 @@ contains
         call HCO_Grid_ESMF_CreateCAM(RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
+        ! How many columns in this task? my_CE
+        my_CE = 0
+        do chnk = begchunk, endchunk
+            my_CE = my_CE + get_ncols_p(chnk)
+        enddo
+
         ! Create HEMCO grid in ESMF format
         call HCO_Grid_ESMF_CreateHCO(RC)
         ASSERT_(RC==ESMF_SUCCESS)
@@ -772,10 +806,10 @@ contains
 
         if(masterproc) then
             write(iulog,*) ">> HEMCO: HCO_PHYS and HCO_ fields initialized successfully"
-            call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
-                               computationalLBound=lbnd_hco,         &
-                               computationalUBound=ubnd_hco, rc=RC)
-            write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ubnd = (", ubnd_hco, ")"
+            ! call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
+            !                    computationalLBound=lbnd_hco,         &
+            !                    computationalUBound=ubnd_hco, rc=RC)
+            ! write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ubnd = (", ubnd_hco, ")"
         endif
 
         ! CAM -> HCO 2-D
@@ -1382,5 +1416,481 @@ contains
             ASSERT_(RC==ESMF_SUCCESS)
         endif
     end subroutine HCO_Grid_ESMF_CreateHCOField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_HCO2CAM_3D
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_HCO2CAM\_3D regrids a HEMCO lat-lon grid
+!  field (i,j,l) to CAM physics mesh (k,i).
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_HCO2CAM_3D(hcoArray, camArray)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldRegrid, ESMF_TERMORDER_SRCSEQ
+!
+! !INPUT PARAMETERS:
+!
+        real(r8),         intent(in)           :: hcoArray(my_IS:my_IE,my_JS:my_JE,1:LM)
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8),         intent(out)          :: camArray(1:LM,1:my_CE)   ! Col and lev start on 1
+!
+! !REMARKS:
+!  (1) There is no vertical regridding. Also, chunk and lev indices are assumed to
+!  start at 1 always.
+!  (2) The subroutine's inner workings abstract ESMF from the user, but this routine
+!  needs to be called from within the gridded component (as suggested by Steve)
+!
+! !REVISION HISTORY:
+!  24 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_HCO2CAM_3D'
+        real(r8), pointer           :: fptr(:,:,:)
+        integer                     :: RC
+
+        call HCO_ESMF_Set3DHCO(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
+        call ESMF_FieldRegrid(HCO_3DFld, CAM_3DFld, HCO2CAM_RouteHandle_3D,     &
+                              termorderflag=ESMF_TERMORDER_SRCSEQ, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        ! (field_in, data_out, IS, IE, JS, JE)
+        ! For chunks, "I" is lev, "J" is chunk index, confusing, you are warned
+        ! (Physics "2D" fields on mesh are actually "3D" data)
+        call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE)
+
+    end subroutine HCO_Grid_HCO2CAM_3D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_CAM2HCO_3D
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_HCO2CAM\_3D regrids a HEMCO lat-lon grid
+!  field (i,j,l) to CAM physics mesh (k,i).
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_CAM2HCO_3D(camArray, hcoArray)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldRegrid, ESMF_TERMORDER_SRCSEQ
+!
+! !INPUT PARAMETERS:
+!
+        real(r8),         intent(in)           :: camArray(1:LM,1:my_CE)   ! Col and lev start on 1
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8),         intent(out)          :: hcoArray(my_IS:my_IE,my_JS:my_JE,1:LM)
+!
+! !REMARKS:
+!  (1) There is no vertical regridding. Also, chunk and lev indices are assumed to
+!  start at 1 always.
+!  (2) The subroutine's inner workings abstract ESMF from the user, but this routine
+!  needs to be called from within the gridded component (as suggested by Steve)
+!
+! !REVISION HISTORY:
+!  24 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_3D'
+        real(r8), pointer           :: fptr(:,:,:)
+        integer                     :: RC
+
+        ! (field, data, KS, KE, CS, CE)
+        call HCO_ESMF_Set3DCAM(CAM_3DFld, camArray, 1, LM, 1, my_CE)
+        call ESMF_FieldRegrid(CAM_3DFld, HCO_3DFld, CAM2HCO_RouteHandle_3D,     &
+                              termorderflag=ESMF_TERMORDER_SRCSEQ, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call HCO_ESMF_Get3DField(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
+
+    end subroutine HCO_Grid_CAM2HCO_3D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Set2DHCO
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Set2DHCO sets values of a ESMF field on
+!  the HEMCO lat-lon grid. (Internal use)
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Set2DHCO(field, data, IS, IE, JS, JE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field       ! intent(in) because write to ptr
+        integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
+        integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
+        real(r8), intent(in)                   :: data(IS:IE, JS:JE) ! Data to write in
+! !REMARKS:
+!  Note there might need to be handling for periodic points?
+!
+! !REVISION HISTORY:
+!  24 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Set2DHCO'
+        integer                     :: I, J
+        integer                     :: RC
+        integer                     :: lbnd(2), ubnd(2)
+        real(r8), pointer           :: fptr(:,:)
+
+        call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
+                           computationalLBound=lbnd,                     &
+                           computationalUBound=ubnd, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
+        do J = lbnd(2), ubnd(2)
+            do I = lbnd(1), ubnd(1)
+                fptr(i,j) = data(i,j)
+            enddo
+        enddo
+
+    end subroutine HCO_ESMF_Set2DHCO
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Set3DHCO
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Set3DHCO sets values of a ESMF field on
+!  the HEMCO lat-lon grid. (Internal use)
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Set3DHCO(field, data, IS, IE, JS, JE, KS, KE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field       ! intent(in) because write to ptr
+        integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
+        integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
+        integer, intent(in)                    :: KS, KE      ! Start and end indices (dim3)
+        real(r8), intent(in)                   :: data(IS:IE, JS:JE, KS:KE) ! Data to write in
+! !REMARKS:
+!  Note there might need to be handling for periodic points?
+!
+! !REVISION HISTORY:
+!  24 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Set3DHCO'
+        integer                     :: I, J, K
+        integer                     :: RC
+        integer                     :: lbnd(2), ubnd(2)
+        real(r8), pointer           :: fptr(:,:,:)
+
+        call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
+                           computationalLBound=lbnd,                     &
+                           computationalUBound=ubnd, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        fptr(:,:,:) = 0.0_r8                                  ! Arbitrary missval
+        do K = lbnd(3), ubnd(3)
+            do J = lbnd(2), ubnd(2)
+                do I = lbnd(1), ubnd(1)
+                    fptr(i,j,k) = data(i,j,k)
+                enddo
+            enddo
+        enddo
+
+    end subroutine HCO_ESMF_Set3DHCO
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Set2DCAM
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Set2DCAM sets values of a ESMF field on
+!  the physics mesh. (Internal use)
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Set2DCAM(field, data, CS, CE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field       ! intent(in) because write to ptr
+        integer, intent(in)                    :: CS, CE      ! Start and end indices (chunk)
+        real(r8), intent(in)                   :: data(CS:CE) ! Data to write in
+! !REMARKS:
+!    Remember that "2-D" fields in physics chunk is actually 3-D (k,i), and 2-D
+!    is actually just column-level data. The target is a mesh so in ESMF it is
+!    the same.
+!
+! !REVISION HISTORY:
+!  23 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Set2DCAM'
+        integer                     :: I
+        integer                     :: RC
+        integer                     :: lbnd(1), ubnd(1)
+        real(r8), pointer           :: fptr(:)
+
+        call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
+                           computationalLBound=lbnd,                     &
+                           computationalUBound=ubnd, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        fptr(:) = 0.0_r8                                      ! Arbitrary missval
+        do I = lbnd(1), ubnd(1)
+            fptr(i) = data(i)
+        enddo
+
+    end subroutine HCO_ESMF_Set2DCAM
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Set3DCAM
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Set3DCAM sets values of a ESMF field on
+!  the physics mesh. (Internal use)
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Set3DCAM(field, data, KS, KE, CS, CE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field       ! intent(in) because write to ptr
+        integer, intent(in)                    :: CS, CE      ! Start and end indices (chunk)
+        integer, intent(in)                    :: KS, KE      ! Start and end indices (dim3)
+        real(r8), intent(in)                   :: data(KS:KE, CS:CE) ! Data to write in
+! !REMARKS:
+!  This is the actual 3-D data routine, pointers (i,k) on a mesh
+!
+! !REVISION HISTORY:
+!  23 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Set3DCAM'
+        integer                     :: I, K
+        integer                     :: RC
+        integer                     :: lbnd(2), ubnd(2)
+        real(r8), pointer           :: fptr(:,:)
+
+        call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
+                           computationalLBound=lbnd,                     &
+                           computationalUBound=ubnd, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
+        do I = lbnd(2), ubnd(2)
+            do K = lbnd(1), ubnd(1)
+                fptr(k,i) = data(k,i)
+            enddo
+        enddo
+
+    end subroutine HCO_ESMF_Set3DCAM
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Get1DField
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Get1DField gets a pointer to an 1-D ESMF
+!  field.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Get1DField(field_in, data_out, IS, IE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field_in
+        integer, intent(in)                    :: IS, IE      ! Start and end indices
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8), intent(out)                  :: data_out(IS:IE)
+!
+! !REVISION HISTORY:
+!  23 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Get1DField'
+        real(r8), pointer           :: fptr(:)
+        integer                     :: RC
+
+        call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        data_out(:) = fptr(:)
+
+    end subroutine HCO_ESMF_Get1DField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Get2DField
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Get2DField gets a pointer to an 2-D ESMF
+!  field.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Get2DField(field_in, data_out, IS, IE, JS, JE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field_in
+        integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
+        integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8), intent(out)                  :: data_out(IS:IE, JS:JE)
+!
+! !REVISION HISTORY:
+!  23 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Get2DField'
+        real(r8), pointer           :: fptr(:,:)
+        integer                     :: RC
+
+        call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        data_out(:,:) = fptr(:,:)
+
+    end subroutine HCO_ESMF_Get2DField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_ESMF_Get3DField
+!
+! !DESCRIPTION: Subroutine HCO\_ESMF\_Get3DField gets a pointer to an 3-D ESMF
+!  field.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_ESMF_Get3DField(field_in, data_out, IS, IE, JS, JE, KS, KE)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldGet
+!
+! !INPUT PARAMETERS:
+!
+        type(ESMF_Field), intent(in)           :: field_in
+        integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
+        integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
+        integer, intent(in)                    :: KS, KE      ! Start and end indices (dim3)
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8), intent(out)                  :: data_out(IS:IE, JS:JE, KS:KE)
+!
+! !REVISION HISTORY:
+!  23 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_ESMF_Get3DField'
+        real(r8), pointer           :: fptr(:,:,:)
+        integer                     :: RC
+
+        call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+        data_out(:,:,:) = fptr(:,:,:)
+
+    end subroutine HCO_ESMF_Get3DField
 !EOC
 end module hco_esmf_grid
