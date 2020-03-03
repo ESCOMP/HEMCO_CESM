@@ -9,6 +9,7 @@ The forked repository contains `[hemco]` as an external to be deployed inside CA
 * `/HEMCO/src/`: Contains the source for the [HEMCO emissions component](https://github.com/geoschem/HEMCO), imported using `manage_externals` (see `Externals_HCO.cfg`)
 * `/hemco_interface.F90`: Main entry point for modular HEMCO emissions module; contains dummy ESMF gridded component used for regridding between CAM and HEMCO lat-lon.
 * `/hco_esmf_grid.F90`: HEMCO internal lat-lon grid computation and ESMF regrid wrapper.
+* `/hco_cam_exports.F90`: Utilities for HEMCO to export its computed results via the CAM history component (diagnostic output) and the CAM physics buffer (feeding into the chemistry components).
 
 ### Auxiliary components:
 * `/hco_esmf_wrappers.F90`: Helper routines

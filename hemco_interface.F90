@@ -25,6 +25,9 @@ module hemco_interface
     ! HEMCO ESMF Grid helpers
     use hco_esmf_grid
 
+    ! CAM export helpers
+    use hco_cam_exports
+
     ! Controls
     use cam_abortutils,           only: endrun      ! fatal terminator
     use cam_logfile,              only: iulog       ! output log handle
@@ -40,9 +43,7 @@ module hemco_interface
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
 
     ! ESMF types
-    use ESMF,                     only: ESMF_Mesh, ESMF_DistGrid
     use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
-    use ESMF,                     only: ESMF_Field, ESMF_RouteHandle
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
 
     implicit none
@@ -267,6 +268,15 @@ contains
 
         if(masterproc) then
             write(iulog,*) "> First refresh of HEMCO Regrid descriptors"
+        endif
+
+        !-----------------------------------------------------------------------
+        ! Initialize CAM export component
+        !-----------------------------------------------------------------------
+        call HCO_Exports_Init()
+
+        if(masterproc) then
+            write(iulog,*) "> Initialize HEMCO/CAM exports component"
         endif
 
         !-----------------------------------------------------------------------
