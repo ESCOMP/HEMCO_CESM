@@ -46,6 +46,8 @@ module hemco_interface
     use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
 
+    use shr_kind_mod,             only: r8 => shr_kind_r8
+
     implicit none
     private
 !
@@ -169,6 +171,9 @@ contains
 
         ! CAM instance information
         use cam_instance,   only: inst_index, inst_name
+
+        ! CAM history output (to be moved somewhere later)
+        use cam_history,    only: addfld, add_default
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
@@ -240,7 +245,9 @@ contains
         ASSERT_(RC==ESMF_SUCCESS)
 
         if(masterproc) then
-            write(iulog,*) "> Initialized ESMF environment successfully!"
+            write(iulog,*) "> Initialized ESMF environment successfully! localPET, PETcount", localPET, PETcount
+            write(iulog,*) "> iam, npes", iam, npes
+            write(iulog,*) "> PETlist", PETlist
         endif
 
         !-----------------------------------------------------------------------
@@ -279,6 +286,25 @@ contains
             write(iulog,*) "> Initialize HEMCO/CAM exports component"
         endif
 
+        ! Test only hplin 3/3/20: add a dummy history field in CAM to test HEMCO
+        ! grid is correctly reflected.
+        ! Two fields are used: HCOg_TEST, which outputs in native HCO lat-lon
+        ! and HCO_TEST, which outputs in the physics mesh.
+        ! These two are used to test whether we've done our math correctly.
+        !
+        ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
+        !
+        ! This call should eventually be reflected elsewhere?
+        ! call addfld("HCOg_TEST", (/'lev'/), 'I', 'kg/m2/s',         &
+        !             'HEMCO 3-D Emissions Species TEST on HCO Grid', &
+        !             gridname="hco_grid")
+        ! call add_default("HCOg_TEST", 2, 'I')     ! Make this field always ON
+
+        call addfld("HCO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
+                    'HEMCO 3-D Emissions Species TEST',             &
+                    gridname="physgrid")
+        call add_default("HCO_TEST", 2, 'I')      ! Make this field always ON
+
         !-----------------------------------------------------------------------
         ! Initialize HEMCO!
         !-----------------------------------------------------------------------
@@ -315,7 +341,7 @@ contains
 
         ! Output and mpi
         use cam_logfile,    only: iulog
-        use spmd_utils,     only: masterproc, mpicom, masterprocid
+        use spmd_utils,     only: masterproc, mpicom, masterprocid, iam
 
         ! ESMF
         use ESMF,           only: ESMF_GridCompRun
@@ -357,9 +383,10 @@ contains
         ! (hplin, 2/6/20)
         if(phase == 2) then
             ! Run the gridded component.
-            call ESMF_GridCompRun(HCO_GridComp, importState=HCO_GridCompState, &
-                                                exportState=HCO_GridCompState, &
-                                                rc=RC)
+            write(6,*) "HEMCO_CAM inside HCOI_Chunk_Run to enter GridComp, iam", iam
+            call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
+                                                !exportState=HCO_GridCompState, &
+                                                !rc=RC)
 
             ASSERT_(RC==ESMF_SUCCESS)
         endif
@@ -384,7 +411,6 @@ contains
     subroutine HCOI_Chunk_Final()
         ! Stub...
     end subroutine HCOI_Chunk_Final
-!EOC
     !-----------------------------------------------------------------------
     !              H E M C O   W R A P P E R   G R I D C O M P             !
     !-----------------------------------------------------------------------
@@ -397,37 +423,120 @@ contains
     !                                                                      !
     !  (hplin, 1/31/20)                                                    !
     !-----------------------------------------------------------------------
-
-    ! Run routine called from the ESMF GridComp. Contains the actual computation
-    ! routines (secret sauce) operating on the HEMCO grid and the regridding
-    ! routines to return it into the physics mesh.
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_GC_Run
+!
+! !DESCRIPTION: HCO\_GC\_Run is an internal method in the HEMCO gridded component
+!  in CAM. It runs the main routines of HEMCO and is called by ESMF.
+!  The routines inside the GridComp operate on the HEMCO grid and are responsible
+!  to run regridding routines to return data into the physics mesh.
+!  In short, code goes here.
+!\\
+!\\
+! !INTERFACE:
+!
     subroutine HCO_GC_Run(GC, IMPORT, EXPORT, Clock, RC)
-        ! Utilities for printing out debug output
+!
+! !USES:
+!
         use cam_logfile,    only: iulog
-        use spmd_utils,     only: masterproc
+        use spmd_utils,     only: masterproc, iam
 
         ! Includes actual HEMCO run routines...
 
-        ! Dummy arguments
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
         type(ESMF_GridComp)                   :: GC
         type(ESMF_State)                      :: IMPORT
         type(ESMF_State)                      :: EXPORT
         type(ESMF_Clock)                      :: Clock
         integer, intent(out)                  :: RC
-
-        ! Local variables
+!
+! !REMARKS:
+!  All the input/output parameters here are dummies.
+!
+! !REVISION HISTORY:
+!  06 Feb 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
         character(len=*),       parameter     :: subname = 'HCO_GC_Run'
+
+        integer                               :: I, J, K
+        real(ESMF_KIND_R8)                    :: dummy(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: dummy_CAM(1:LM, 1:my_CE)
+
+        write(6,*) "HEMCO_CAM: Inside GridComp", iam
 
         !-----------------------------------------------------------------------
         ! Update regridding file handles as necessary
         !-----------------------------------------------------------------------
-        ! TODO
+        call HCO_Grid_UpdateRegrid(RC=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> Reload (if necessary) of HEMCO Regrid descriptors"
+        endif
 
         !-----------------------------------------------------------------------
         ! Run HEMCO!
         !-----------------------------------------------------------------------
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Inside GridComp: running HCO_GC_Run!"
+        endif
+
+        write(6,*) "HEMCO_CAM: before dummy array"
+
+        !-----------------------------------------------------------------------
+        ! Do some dummy stuff here while we don't have actual "HEMCO"
+        !-----------------------------------------------------------------------
+        ! This writes a striped grid to level 1 on lat-lon. Fun!
+        dummy(:,:,:) = 0.0_r8
+        dummy_CAM(:,:) = 0.0_r8
+        do I = my_IS, my_IE
+        do J = my_JS, my_JE
+            if(mod(int(XMid(I,J)), 2) == 0 .and. mod(int(YMid(I,J)), 2) == 0) then
+                dummy(I,J,1) = XMid(I,J)
+            endif
+        enddo
+        enddo
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Successful creation of dummy array!"
+        endif
+
+        ! Write to history on hco_grid (hco_grid NOT working)
+        ! call HCO_Export_History_HCO3D("HCOg_TEST", dummy)
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Exported to HCOg_TEST via outfld!"
+        endif
+
+        write(6,*) "HEMCO_CAM: before dummy->dummy_CAM"
+
+        ! Regrid to CAM physics mesh!
+        call HCO_Grid_HCO2CAM_3D(dummy, dummy_CAM)
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Successful dummy regrid to CAM!"
+        endif
+
+        write(6,*) "HEMCO_CAM: after dummy->dummy_CAM"
+
+        ! Write to history on CAM mesh
+        call HCO_Export_History_CAM3D("HCO_TEST", dummy_CAM)
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Export to HCO_TEST via outfld!"
         endif
 
         ! ... stub ...

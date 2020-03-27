@@ -26,6 +26,8 @@ module hco_esmf_grid
     use ESMF,                     only: ESMF_RouteHandle
     use ESMF,                     only: ESMF_SUCCESS
 
+    use ESMF,                     only: ESMF_LogWrite, ESMF_LOGMSG_INFO
+
     ! MPI
     use mpi,                      only: MPI_PROC_NULL, MPI_SUCCESS, MPI_INTEGER
 
@@ -677,6 +679,16 @@ contains
         deallocate(itasks_send)
         deallocate(itasks_recv)
 
+        if(masterproc) then
+            ! Output information on the decomposition
+            write(iulog,*) ">> HEMCO DEBUG - Committed HCO_Tasks decomposition"
+            write(iulog,*) "nPET, nPET_lon, nPET_lat", nPET, nPET_lon, nPET_lat
+            do N = 0, nPET-1
+                write(iulog,*) "PET", N, " ID", HCO_Tasks(N)%ID, " ID_I", HCO_Tasks(N)%ID_I, " ID_J", HCO_Tasks(N)%ID_J, &
+                               "IM (IS,IE)", HCO_Tasks(N)%IM, HCO_Tasks(N)%IS, HCO_Tasks(N)%IE, " // JM (JS, JE)", HCO_Tasks(N)%JM, HCO_Tasks(N)%JS, HCO_Tasks(N)%JE
+            enddo
+        endif
+
         !
         ! Just remember that my_IM, my_JM ... are your keys to generating
         ! the relevant met fields and passing to HEMCO.
@@ -722,7 +734,7 @@ contains
 
         ! ESMF
         use ESMF,               only: ESMF_FieldRegridStore
-        use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE
+        use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE_2ND
         use ESMF,               only: ESMF_POLEMETHOD_ALLAVG, ESMF_POLEMETHOD_NONE
         use ESMF,               only: ESMF_EXTRAPMETHOD_NEAREST_IDAVG
 
@@ -758,22 +770,24 @@ contains
         integer                     :: chnk
 
         ! Debug only
-        ! integer                     :: lbnd_hco(3), ubnd_hco(3)   ! 3-d bounds of HCO field
-        ! real(r8), pointer           :: fptr(:,:,:) ! debug
+        integer                     :: lbnd_hco(3), ubnd_hco(3)   ! 3-d bounds of HCO field
+        integer                     :: lbnd_cam(2), ubnd_cam(2)   ! 3-d bounds of CAM field
+        real(r8), pointer           :: fptr(:,:,:)   ! debug
+        real(r8), pointer           :: fptr_cam(:,:) ! debug
 
         ! Assume success
         RC = ESMF_SUCCESS
 
         ! Parameters for ESMF RouteHandle (taken from ionos interface)
         smm_srctermproc =  0
-        smm_pipelinedep = 16
+        smm_pipelinedep = -1 ! Accept auto-tuning of the pipeline depth
 
         ! Check if we need to update
         if(cam_last_atm_id == atm_id) then
             if(masterproc) then
                 write(iulog,*) ">> UpdateRegrid received ", atm_id, " already set"
-                return
             endif
+            return
         endif
 
         cam_last_atm_id = atm_id
@@ -783,6 +797,9 @@ contains
         ASSERT_(RC==ESMF_SUCCESS)
 
         ! How many columns in this task? my_CE
+        ! Note that my_CE is LOCAL column index (1:my_CE) and is equivalent to "blksize"
+        ! in the ionos coupling code. This was 144 in my testing.
+        ! But this is NOT ppgrid::pcols, which was 16.
         my_CE = 0
         do chnk = begchunk, endchunk
             my_CE = my_CE + get_ncols_p(chnk)
@@ -797,6 +814,7 @@ contains
 
         ! FIXME: Destroy fields before creating to prevent memory leak? ESMF_Destroy
         ! requires the field to be present (so no silent destruction) (hplin, 2/21/20)
+        
         call HCO_Grid_ESMF_CreateCAMField(CAM_2DFld, CAM_PhysMesh, 'HCO_PHYS_2DFLD', 0, RC)
         call HCO_Grid_ESMF_CreateCAMField(CAM_3DFld, CAM_PhysMesh, 'HCO_PHYS_3DFLD', LM, RC)
 
@@ -806,10 +824,15 @@ contains
 
         if(masterproc) then
             write(iulog,*) ">> HEMCO: HCO_PHYS and HCO_ fields initialized successfully"
-            ! call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
-            !                    computationalLBound=lbnd_hco,         &
-            !                    computationalUBound=ubnd_hco, rc=RC)
-            ! write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ubnd = (", ubnd_hco, ")"
+            call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
+                               computationalLBound=lbnd_hco,         &
+                               computationalUBound=ubnd_hco, rc=RC)
+            write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ", my_IS, my_IE, "ubnd = (", ubnd_hco, ")", my_JS, my_JE
+        
+            call ESMF_FieldGet(CAM_3DFld, localDE=0, farrayPtr=fptr_cam, &
+                               computationalLBound=lbnd_cam,         &
+                               computationalUBound=ubnd_cam, rc=RC)
+            write(iulog,*) ">> HEMCO: Debug CAM Field: lbnd = (", lbnd_cam, "), ubnd = (", ubnd_cam, ")", my_CE
         endif
 
         ! CAM -> HCO 2-D
@@ -819,9 +842,14 @@ contains
             poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
             extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
             routeHandle=CAM2HCO_RouteHandle_2D,                    &
-            srcTermProcessing=smm_srctermproc,                     &
+            !srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> After FieldRegridStore, CAM2D->HCO2D, pipeline", smm_pipelinedep
+        endif
+        smm_pipelinedep = -1
 
         ! Create and store ESMF route handles for regridding CAM <-> HCO
         ! CAM -> HCO 3-D
@@ -831,31 +859,45 @@ contains
             poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
             extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
             routeHandle=CAM2HCO_RouteHandle_3D,                    &
-            srcTermProcessing=smm_srctermproc,                     &
+            !srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> After FieldRegridStore, CAM3D->HCO3D, pipeline", smm_pipelinedep
+        endif
+        smm_pipelinedep = -1
 
         ! HCO -> CAM 2-D
         call ESMF_FieldRegridStore(                                &
             srcField=HCO_2DFld, dstField=CAM_2DFld,                &
-            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE_2ND,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_2D,                    &
-            srcTermProcessing=smm_srctermproc,                     &
+            !srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> After FieldRegridStore, HCO2D->CAM2D, pipeline", smm_pipelinedep
+        endif
+        smm_pipelinedep = -1
 
         ! HCO -> CAM 3-D
         ! 3-D conserv. regridding cannot be done on a stagger other than center
         ! (as of ESMF 8.0.0 in ESMF_FieldRegrid.F90::993)
         call ESMF_FieldRegridStore(                                &
             srcField=HCO_3DFld, dstField=CAM_3DFld,                &
-            regridMethod=ESMF_REGRIDMETHOD_CONSERVE,               &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE_2ND,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_3D,                    &
-            srcTermProcessing=smm_srctermproc,                     &
+            !srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) ">> After FieldRegridStore, HCO3D->CAM3D, pipeline", smm_pipelinedep
+        endif
 
         if(masterproc) then
             write(iulog,*) ">> HEMCO: FieldRegridStore four-way ready"
@@ -1367,6 +1409,8 @@ contains
         use ESMF,               only: ESMF_STAGGERLOC_CENTER
         use ESMF,               only: ESMF_ArraySpec, ESMF_ArraySpecSet
         use ESMF,               only: ESMF_FieldCreate
+
+        use ESMF,               only: ESMF_GridGet, ESMF_Array, ESMF_ArrayCreate, ESMF_INDEX_GLOBAL
 !
 ! !INPUT PARAMETERS:
 !
@@ -1394,17 +1438,40 @@ contains
         character(len=*), parameter :: subname = 'HCO_Grid_ESMF_CreateHCOField'
         type(ESMF_ArraySpec)        :: arrayspec
 
+        type(ESMF_Array)            :: array3D, array2D
+        type(ESMF_DistGrid)         :: distgrid
+
+        ! Get grid information from the HEMCO grid:
+        call ESMF_GridGet(grid, staggerloc=ESMF_STAGGERLOC_CENTER, &
+                          distgrid=distgrid, rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_LogWrite("After ESMF_GridGet", ESMF_LOGMSG_INFO, rc=RC)
+
         if(nlev > 0) then
             ! 3D field (i,j,k) with nondistributed vertical
             call ESMF_ArraySpecSet(arrayspec, 3, ESMF_TYPEKIND_R8, rc=RC)
             ASSERT_(RC==ESMF_SUCCESS)
 
-            field = ESMF_FieldCreate(grid, arrayspec,           &
+            call ESMF_LogWrite("After array3D-ESMF_ArraySpecSet", ESMF_LOGMSG_INFO, rc=RC)
+
+            array3D = ESMF_ArrayCreate(arrayspec=arrayspec,     &
+                                       distgrid=distgrid,       &
+                                       computationalEdgeUWidth=(/1,0/), &
+                                       undistLBound=(/1/), undistUBound=(/nlev/), &
+                                       indexflag=ESMF_INDEX_GLOBAL, rc=RC)
+            ASSERT_(RC==ESMF_SUCCESS)
+
+            call ESMF_LogWrite("After array3D-ESMF_ArrayCreate", ESMF_LOGMSG_INFO, rc=RC)
+
+            field = ESMF_FieldCreate(grid, array3D,             & ! grid, arrayspec
                                      name=name,                 &
                                      ungriddedLBound=(/1/),     &
                                      ungriddedUBound=(/nlev/),  &
                                      staggerloc=ESMF_STAGGERLOC_CENTER, rc=RC)
             ASSERT_(RC==ESMF_SUCCESS)
+
+            call ESMF_LogWrite("After array3D-ESMF_FieldCreate", ESMF_LOGMSG_INFO, rc=RC)
         else
             ! 2D field (i,j)
             call ESMF_ArraySpecSet(arrayspec, 2, ESMF_TYPEKIND_R8, rc=RC)
@@ -1434,7 +1501,12 @@ contains
 !
 ! !USES:
 !
-        use ESMF,               only: ESMF_FieldRegrid, ESMF_TERMORDER_SRCSEQ
+        use ESMF,               only: ESMF_FieldRegrid
+        use ESMF,               only: ESMF_TERMORDER_SRCSEQ, ESMF_TERMORDER_FREE
+
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
 !
 ! !INPUT PARAMETERS:
 !
@@ -1442,7 +1514,7 @@ contains
 !
 ! !OUTPUT PARAMETERS:
 !
-        real(r8),         intent(out)          :: camArray(1:LM,1:my_CE)   ! Col and lev start on 1
+        real(r8),         intent(inout)        :: camArray(1:LM,1:my_CE)   ! Col and lev start on 1
 !
 ! !REMARKS:
 !  (1) There is no vertical regridding. Also, chunk and lev indices are assumed to
@@ -1459,18 +1531,31 @@ contains
 ! !LOCAL VARIABLES:
 !
         character(len=*), parameter :: subname = 'HCO_Grid_HCO2CAM_3D'
-        real(r8), pointer           :: fptr(:,:,:)
         integer                     :: RC
 
         call HCO_ESMF_Set3DHCO(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after HCO_ESMF_Set3DHCO"
+        endif
+
         call ESMF_FieldRegrid(HCO_3DFld, CAM_3DFld, HCO2CAM_RouteHandle_3D,     &
-                              termorderflag=ESMF_TERMORDER_SRCSEQ, rc=RC)
+                              termorderflag=ESMF_TERMORDER_SRCSEQ,              &
+                              checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after ESMF_FieldRegrid"
+        endif
 
         ! (field_in, data_out, IS, IE, JS, JE)
         ! For chunks, "I" is lev, "J" is chunk index, confusing, you are warned
         ! (Physics "2D" fields on mesh are actually "3D" data)
         call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after HCO_ESMF_Get2DField"
+        endif
 
     end subroutine HCO_Grid_HCO2CAM_3D
 !EOC
@@ -1492,6 +1577,10 @@ contains
 ! !USES:
 !
         use ESMF,               only: ESMF_FieldRegrid, ESMF_TERMORDER_SRCSEQ
+
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
 !
 ! !INPUT PARAMETERS:
 !
@@ -1499,7 +1588,7 @@ contains
 !
 ! !OUTPUT PARAMETERS:
 !
-        real(r8),         intent(out)          :: hcoArray(my_IS:my_IE,my_JS:my_JE,1:LM)
+        real(r8),         intent(inout)        :: hcoArray(my_IS:my_IE,my_JS:my_JE,1:LM)
 !
 ! !REMARKS:
 !  (1) There is no vertical regridding. Also, chunk and lev indices are assumed to
@@ -1516,16 +1605,31 @@ contains
 ! !LOCAL VARIABLES:
 !
         character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_3D'
-        real(r8), pointer           :: fptr(:,:,:)
         integer                     :: RC
 
+        write(6,*) "> before HCO_ESMF_Set3DCAM"
         ! (field, data, KS, KE, CS, CE)
         call HCO_ESMF_Set3DCAM(CAM_3DFld, camArray, 1, LM, 1, my_CE)
+        write(6,*) "> after HCO_ESMF_Set3DCAM"
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Set3DCAM"
+        endif
+
         call ESMF_FieldRegrid(CAM_3DFld, HCO_3DFld, CAM2HCO_RouteHandle_3D,     &
-                              termorderflag=ESMF_TERMORDER_SRCSEQ, rc=RC)
+                              termorderflag=ESMF_TERMORDER_SRCSEQ,              &
+                              checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after ESMF_FieldRegrid"
+        endif
+
         call HCO_ESMF_Get3DField(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Get3DField"
+        endif
 
     end subroutine HCO_Grid_CAM2HCO_3D
 !EOC
@@ -1624,18 +1728,24 @@ contains
         character(len=*), parameter :: subname = 'HCO_ESMF_Set3DHCO'
         integer                     :: I, J, K
         integer                     :: RC
-        integer                     :: lbnd(2), ubnd(2)
+        integer                     :: lbnd(3), ubnd(3)
         real(r8), pointer           :: fptr(:,:,:)
+
+        call ESMF_LogWrite("In HCO_ESMF_Set3DHCO before ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
 
         call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
                            computationalLBound=lbnd,                     &
                            computationalUBound=ubnd, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
+
+        call ESMF_LogWrite("In HCO_ESMF_Set3DHCO after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
         fptr(:,:,:) = 0.0_r8                                  ! Arbitrary missval
+
+        write(6,*) "In HCO_ESMF_Set3DHCO IS,IE,JS,JE,KS,KE ESMF bnds", lbnd(1),ubnd(1),lbnd(2),ubnd(2),lbnd(3),ubnd(3)
         do K = lbnd(3), ubnd(3)
             do J = lbnd(2), ubnd(2)
                 do I = lbnd(1), ubnd(1)
-                    fptr(i,j,k) = data(i,j,k)
+                    fptr(I,J,K) = data(I,J,K)
                 enddo
             enddo
         enddo
@@ -1738,11 +1848,16 @@ contains
         integer                     :: lbnd(2), ubnd(2)
         real(r8), pointer           :: fptr(:,:)
 
+        call ESMF_LogWrite("In HCO_ESMF_Set3DCAM before ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
+
         call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
                            computationalLBound=lbnd,                     &
                            computationalUBound=ubnd, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
+
+        call ESMF_LogWrite("In HCO_ESMF_Set3DCAM after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
+        write(6,*) "CAM mesh bounds: l1,u1,l2,u2", lbnd(1),ubnd(1),lbnd(2),ubnd(2), "ks,ke,cs,ce", ks, ke, cs, ce
         fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
         do I = lbnd(2), ubnd(2)
             do K = lbnd(1), ubnd(1)
