@@ -131,7 +131,7 @@ module hco_esmf_grid
     real(r8), public, protected:: DY                 ! Delta X           [deg lat]
 
     ! Horizontal Coordinates
-    real(r8), public, protected, allocatable ::    &
+    real(r8), public, pointer  ::                  &
                                   XMid (:,:),      & ! Longitude centers [deg]
                                   XEdge(:,:),      & ! Longitude edges   [deg]
                                   YMid (:,:),      & ! Latitude  centers [deg]
@@ -155,7 +155,7 @@ module hco_esmf_grid
     !       they likely need a regrid through ESMF from State%PSDry or something.
     !       This is only available in the GridComp Run, not worrying about it here.
     !       (hplin, 2/11/20)
-    real(r8), public, protected, allocatable ::    &
+    real(r8), public, pointer  ::                  &
                                   AREA_M2(:,:),    & ! Area of grid box [m^2]
                                   Ap     (:),      & ! "hyai" Hybrid-sigma Ap value [Pa]
                                   Bp     (:)         ! "hybi" Hybrid-sigma Bp value [Pa]
@@ -1607,10 +1607,8 @@ contains
         character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_3D'
         integer                     :: RC
 
-        write(6,*) "> before HCO_ESMF_Set3DCAM"
         ! (field, data, KS, KE, CS, CE)
         call HCO_ESMF_Set3DCAM(CAM_3DFld, camArray, 1, LM, 1, my_CE)
-        write(6,*) "> after HCO_ESMF_Set3DCAM"
 
         if(masterproc) then
             write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Set3DCAM"
@@ -1741,7 +1739,7 @@ contains
         call ESMF_LogWrite("In HCO_ESMF_Set3DHCO after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
         fptr(:,:,:) = 0.0_r8                                  ! Arbitrary missval
 
-        write(6,*) "In HCO_ESMF_Set3DHCO IS,IE,JS,JE,KS,KE ESMF bnds", lbnd(1),ubnd(1),lbnd(2),ubnd(2),lbnd(3),ubnd(3)
+        ! write(6,*) "In HCO_ESMF_Set3DHCO IS,IE,JS,JE,KS,KE ESMF bnds", lbnd(1),ubnd(1),lbnd(2),ubnd(2),lbnd(3),ubnd(3)
         do K = lbnd(3), ubnd(3)
             do J = lbnd(2), ubnd(2)
                 do I = lbnd(1), ubnd(1)
@@ -1857,7 +1855,6 @@ contains
 
 
         call ESMF_LogWrite("In HCO_ESMF_Set3DCAM after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
-        write(6,*) "CAM mesh bounds: l1,u1,l2,u2", lbnd(1),ubnd(1),lbnd(2),ubnd(2), "ks,ke,cs,ce", ks, ke, cs, ce
         fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
         do I = lbnd(2), ubnd(2)
             do K = lbnd(1), ubnd(1)

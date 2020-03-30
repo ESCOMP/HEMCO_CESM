@@ -25,7 +25,7 @@ module hco_cam_exports
     use cam_logfile,              only: iulog       ! output log handle
 
     ! HEMCO grid information (for registering with CAM)
-    use hco_esmf_grid,            only: my_IS, my_IE, my_JS, my_JE
+    use hco_esmf_grid,            only: my_IS, my_IE, my_JS, my_JE, my_IM, my_JM
     use hco_esmf_grid,            only: my_ID, nPET ! mytid, ntask
     use hco_esmf_grid,            only: my_CE       ! # of CAM ncols on this task (total sum of ncols_p)
     use hco_esmf_grid,            only: IM, JM, LM, XMid, YMid ! nlat/lon/lev, glat/lon
@@ -134,7 +134,7 @@ contains
         ! (hplin, 3/2/2020)
         allocate(coord_map(my_JE - my_JS + 1))
         coord_map = (/(J, J = my_JS, my_JE)/)
-        lat_coord => horiz_coord_create('YMid', '', JM, 'latitude',                          &
+        lat_coord => horiz_coord_create('YMid', '', my_JM, 'latitude',                       &
                                         'degrees_north', my_JS, my_JE, YMid(1,my_JS:my_JE),  &
                                         map = coord_map)
         deallocate(coord_map)
@@ -142,7 +142,7 @@ contains
 
         allocate(coord_map(my_IE - my_IS + 1))
         coord_map = (/(I, I = my_IS, my_IE)/)
-        lon_coord => horiz_coord_create('XMid', '', IM, 'longitude',                         &
+        lon_coord => horiz_coord_create('XMid', '', my_IM, 'longitude',                      &
                                         'degrees_east', my_IS, my_IE, XMid(my_IS:my_IE,1),   &
                                         map = coord_map)
         deallocate(coord_map)
@@ -302,8 +302,6 @@ contains
             return
         endif
 
-        write(6, *) "hco_cam_exports: inside HCO_Export_History_CAM3D! iam", iam
-
         ! For all chunks on this PET
         J = 0
         do lchnk = begchunk, endchunk
@@ -317,9 +315,9 @@ contains
             enddo
 
             ! Write to outfld chunk by chunk
-            write(6,*) "hco_cam_exports before writing ncol, lchnk, ", ncol, lchnk
+            ! write(6,*) "hco_cam_exports before writing ncol, lchnk, ", ncol, lchnk
             call outfld(fldname, tmpfld_ik(:ncol, :), ncol, lchnk)
-            write(6,*) "hco_cam_exports writing ncol, lchnk, ", ncol, lchnk
+            ! write(6,*) "hco_cam_exports writing ncol, lchnk, ", ncol, lchnk
         enddo
 
     end subroutine HCO_Export_History_CAM3D

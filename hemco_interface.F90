@@ -46,6 +46,13 @@ module hemco_interface
     use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
 
+    ! HEMCO types
+    use HCO_Error_Mod,            only: hp          ! HEMCO precision
+    use HCO_Error_Mod,            only: HCO_SUCCESS, HCO_FAIL, HCO_VERSION
+    use HCO_State_Mod,            only: HCO_State
+    use HCOX_State_Mod,           only: Ext_State   ! Note: Extensions unsupported
+    use HCO_Types_Mod,            only: ConfigObj
+
     use shr_kind_mod,             only: r8 => shr_kind_r8
 
     implicit none
@@ -65,6 +72,21 @@ module hemco_interface
     public  :: HCOI_Chunk_Run
     public  :: HCOI_Chunk_Final
 !
+! !REMARKS:
+!  This file is both the interface of HEMCO component to CAM and the manager of the
+!  underlying HEMCO gridded component (HCO\_GC\_*).
+!
+!  The whole file is getting a little long in the tooth, though. It might be reorg-
+!  anized in the future to service hemco_init/run/final which manages the gridded
+!  components, which in turn call the HEMCO chunk interface (HCOI\_Chunk\_*).
+!
+!  For now, the HEMCO chunk interfaces (HCOI\_Chunk\_*) are called in directly from
+!  CAM cam_control.F90. I am not in the mood of writing a wrapper for now, but this
+!  could be abstracted in the future. (hplin, 3/29/20)
+!
+!  On a side note, this is the 8th day of living in the 2019-nCoV scare. I miss
+!  matcha tea and would die to eat some sweets.
+!
 ! !REVISION HISTORY:
 !  29 Jan 2020 - H.P. Lin    - Initial version
 !EOP
@@ -73,8 +95,14 @@ module hemco_interface
 !
 ! !PRIVATE TYPES:
 !
-    type(ESMF_GridComp)  :: HCO_GridComp        ! HEMCO GridComp
-    type(ESMF_State)     :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
+    type(ESMF_GridComp)              :: HCO_GridComp        ! HEMCO GridComp
+    type(ESMF_State)                 :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
+
+    character(len=256)               :: HcoConfigFile       ! HEMCO configuration file loc
+    type(ConfigObj), pointer         :: HcoConfig => NULL()
+
+    type(HCO_State), pointer, public :: HcoState  => NULL()
+    type(Ext_State), pointer, public :: ExtState  => NULL()
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -135,10 +163,8 @@ contains
             write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
         endif
 
-        ! Read HEMCO Configuration file then broadcast
-        ! ...
-
-        
+        ! Save this to the module information
+        HcoConfigFile = hemco_config_file
     end subroutine hemco_readnl
 !EOC
 !------------------------------------------------------------------------------
@@ -158,22 +184,40 @@ contains
 !
 ! !USES:
 !
-        use cam_logfile,    only: iulog
-        use spmd_utils,     only: masterproc, mpicom, masterprocid
+        use cam_logfile,      only: iulog
+        use spmd_utils,       only: masterproc, mpicom, masterprocid
+        use spmd_utils,       only: npes, iam
 
-        use mpi,            only: MPI_INTEGER
-        use ESMF,           only: ESMF_VM, ESMF_VMGetCurrent, ESMF_VMGet
-        use ESMF,           only: ESMF_GridCompCreate, ESMF_GridCompInitialize
-        use ESMF,           only: ESMF_GridCompSetServices
-        use ESMF,           only: ESMF_StateCreate
+        use mpi,              only: MPI_INTEGER
+        use ESMF,             only: ESMF_VM, ESMF_VMGetCurrent, ESMF_VMGet
+        use ESMF,             only: ESMF_GridCompCreate, ESMF_GridCompInitialize
+        use ESMF,             only: ESMF_GridCompSetServices
+        use ESMF,             only: ESMF_StateCreate
 
-        use ESMF,           only: ESMF_Initialize, ESMF_LOGKIND_MULTI
+        use ESMF,             only: ESMF_Initialize, ESMF_LOGKIND_MULTI
 
         ! CAM instance information
-        use cam_instance,   only: inst_index, inst_name
+        use cam_instance,     only: inst_index, inst_name
 
         ! CAM history output (to be moved somewhere later)
-        use cam_history,    only: addfld, add_default
+        use cam_history,      only: addfld, add_default
+
+        ! HEMCO Initialization
+        use HCO_Config_Mod,   only: Config_ReadFile, ConfigInit
+        use HCO_Driver_Mod,   only: HCO_Init
+        use HCO_Error_Mod,    only: HCO_LOGFILE_OPEN
+        use HCO_LogFile_Mod,  only: HCO_Spec2Log
+        use HCO_State_Mod,    only: HcoState_Init
+        use HCO_Types_Mod,    only: ConfigObj
+        use HCO_VertGrid_Mod, only: HCO_VertGrid_Define
+
+        ! HEMCO extensions are unsupported for now.
+!
+! !REMARKS:
+!  HEMCO extensions are unsupported in the preliminary version, due to
+!  complications associated with met fields and stuff.
+!  A "state conversion" to convert CAM met fields to GEOSFP format will
+!  need to be coordinated with fritzt later down the road (hplin, 3/27/20)
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
@@ -187,6 +231,8 @@ contains
         integer                      :: RC                   ! ESMF return code
         integer                      :: HMRC                 ! HEMCO return code
 
+        integer                      :: N                    ! Loop idx
+
         ! Gridded component properties.
         ! Note that while edyn_grid_comp initializes the GridComp directly using
         ! cam_instance's inst_name, I think this may cause namespace clashing.
@@ -195,18 +241,26 @@ contains
 
         ! MPI stuff
         integer                      :: localPET, PETcount
-        integer                      :: iam, npes            ! My CPU, # of PETs
 
         ! PETs for each instance of the physics grid
         integer, allocatable         :: PETlist(:)
 
         type(ESMF_VM)                :: hco_esmf_vm
 
+        ! HEMCO properties
+        integer                      :: nHcoSpc
+
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "HEMCO_CAM interface version 0.1"
+            write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
+            write(iulog,*) "Config File: ", HcoConfigFile
         endif
+
+        ! Assume success
+        RC = ESMF_SUCCESS
+        HMRC = HCO_SUCCESS
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -217,10 +271,6 @@ contains
 
         call ESMF_VMGet(hco_esmf_vm, localPet=localPET, petCount=PETcount, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
-
-        ! Get MPI communicator stuff
-        call mpi_comm_size(mpicom, npes, RC)
-        call mpi_comm_rank(mpicom, iam,  RC)
 
         ! Allocate and collect PETs for each instance of the physics grid
         allocate(PETlist(npes))
@@ -260,6 +310,7 @@ contains
 
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
+
         call HCO_Grid_Init (IM_in = 360, JM_in = 181, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
@@ -288,33 +339,215 @@ contains
 
         ! Test only hplin 3/3/20: add a dummy history field in CAM to test HEMCO
         ! grid is correctly reflected.
-        ! Two fields are used: HCOg_TEST, which outputs in native HCO lat-lon
-        ! and HCO_TEST, which outputs in the physics mesh.
-        ! These two are used to test whether we've done our math correctly.
-        !
+        ! HCO_TEST outputs in the physics mesh.
         ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
         !
         ! This call should eventually be reflected elsewhere?
-        ! call addfld("HCOg_TEST", (/'lev'/), 'I', 'kg/m2/s',         &
-        !             'HEMCO 3-D Emissions Species TEST on HCO Grid', &
-        !             gridname="hco_grid")
-        ! call add_default("HCOg_TEST", 2, 'I')     ! Make this field always ON
-
         call addfld("HCO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
                     'HEMCO 3-D Emissions Species TEST',             &
                     gridname="physgrid")
         call add_default("HCO_TEST", 2, 'I')      ! Make this field always ON
 
         !-----------------------------------------------------------------------
+        ! Initialize the HEMCO configuration object...
+        !-----------------------------------------------------------------------
+        if(masterproc) write(iulog,*) "> Initializing HCO configuration object"
+
+        ! We are using gas_pcnst here, which is # of "gas phase" species.
+        ! This might be changed down the line but we are reading chem_mods
+        ! for now.
+        call ConfigInit(HcoConfig, HMRC, nModelSpecies=gas_pcnst)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        ! HcoConfig%amIRoot   = masterproc ! to restore after update to trunk
+        HcoConfig%MetField  = 'MERRA2'
+        HcoConfig%GridRes   = ''
+
+        !-----------------------------------------------------------------------
+        ! Retrieve the species list
+        !-----------------------------------------------------------------------
+        nHcoSpc             = gas_pcnst          ! # of hco species? using gas
+
+        ! Below we directly use nHcoSpc for now... it may be wrong in the future though
+        ! (hplin, 3/29/20)
+        HcoConfig%nModelSpc = nHcoSpc
+        HcoConfig%nModelAdv = nHcoSpc            ! # of adv spc?
+
+        if(masterproc) write(iulog,*) "> Initializing HCO species list!"
+
+        do N = 1, nHcoSpc
+            HcoConfig%ModelSpc(N)%ModID   = N ! model id
+            HcoConfig%ModelSpc(N)%SpcName = trim(solsym(N))
+        enddo
+
+        !-----------------------------------------------------------------------
+        ! Read HEMCO configuration file from HcoConfigFile (location in CAM namelist)
+        !-----------------------------------------------------------------------
+        if(masterproc) write(iulog,*) "> Reading HEMCO configuration file..."
+
+        ! FIXME: Not implementing "Dry-run" functionality in HEMCO_CESM. (hplin, 3/27/20)
+        ! Phase: 0 = all, 1 = sett and switches only, 2 = fields only
+        call Config_ReadFile(masterproc, HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        ! Open the log file
+        if(masterproc) then
+            call HCO_LOGFILE_OPEN(HcoConfig%Err, RC=HMRC)
+            ASSERT_(HMRC==HCO_SUCCESS)
+        endif
+
+        call Config_ReadFile(masterproc, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "> Read HEMCO configuration file OK!"
+
+        !-----------------------------------------------------------------------
+        ! Initialize the HEMCO state object
+        !-----------------------------------------------------------------------
+        call HcoState_Init(HcoState, HcoConfig, nHcoSpc, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "> Initialize HEMCO state obj OK!"
+
+        ! Emissions, chemistry and dynamics timestep [s]
+        ! !FIXME: Need to implement timestep manager component...
+        HcoState%TS_EMIS = 1.0
+        HcoState%TS_CHEM = 1.0
+        HcoState%TS_DYN  = 1.0
+
+        ! Not a MAPL simulation. isESMF is deceiving.
+        HcoState%Options%isESMF = .false.
+
+        ! Deposition length scale. Used for computing dry deposition frequencies
+        ! over the entire PBL or the first model layer. Hardcoded for now,
+        ! should load Input_Opt%PBL_DRYDEP from GEOS-Chem-CESM (hplin, 3/29/20)
+        ! !FIXME
+        HcoState%Options%PBL_DRYDEP = .false.
+
+        ! Don't support DryRun option (for now)
+        HcoState%Options%IsDryRun = .false.
+
+        if(masterproc) write(iulog,*) "> Set basic HEMCO state obj OK!"
+
+        !-----------------------------------------------------------------------
+        ! Register HEMCO species information (HEMCO state object)
+        !-----------------------------------------------------------------------
+        do N = 1, nHcoSpc
+            HcoState%Spc(N)%ModID         = N               ! model id
+            HcoState%Spc(N)%SpcName       = trim(solsym(N)) ! species name
+
+            HcoState%Spc(N)%MW_g          = adv_mass(N)     ! mol. weight [g/mol]
+
+            ! WARNING: This is the EMITTED molecular weight of species.
+            ! Some hydrocarbons (e.g. ISOP) are emitted as equiv. no. of C atoms
+            ! e.g. ISOP EmMW_g is 12.0.
+            !
+            ! Many species in GEOS-Chem behave like this, i.e.
+            ! ACET, ALD2, ALK4, BCPI, BCPO, BENZ, C2H6, C3H8, EOH, ISOP, MEK
+            ! MOPI, MOPO, NAP,  OCPI, OCPO, OPOA1, OPOA2, OPOG1, OPOG2,
+            ! POA1, POA2, POG1, POG2, PRPE, TOLU, XYLE, APMBCBIN**, APMOCBIN**
+            !
+            ! WE PREFORM A MANUAL ADJUSTMENT HERE, BECAUSE WE DO NOT KNOW ABOUT
+            ! THE PRESENCE OF GEOS-CHEM. WE PROBABLY HAVE TO REVISIT THIS IN THE
+            ! FUTURE.
+            if(trim(solsym(N)) .eq. 'ACET'  .or.  trim(solsym(N)) .eq. 'ALD2'  .or.  &
+               trim(solsym(N)) .eq. 'ALK4'  .or.  trim(solsym(N)) .eq. 'BCPI'  .or.  &
+               trim(solsym(N)) .eq. 'BCPO'  .or.  trim(solsym(N)) .eq. 'BENZ'  .or.  &
+               trim(solsym(N)) .eq. 'C2H6'  .or.  trim(solsym(N)) .eq. 'C3H8'  .or.  &
+               trim(solsym(N)) .eq. 'EOH'   .or.  trim(solsym(N)) .eq. 'ISOP'  .or.  &
+               trim(solsym(N)) .eq. 'MEK'   .or.  trim(solsym(N)) .eq. 'MOPI'  .or.  &
+               trim(solsym(N)) .eq. 'MOPO'  .or.  trim(solsym(N)) .eq. 'NAP'   .or.  &
+               trim(solsym(N)) .eq. 'OCPI'  .or.  trim(solsym(N)) .eq. 'OCPO'  .or.  &
+               trim(solsym(N)) .eq. 'OPOA1' .or.  trim(solsym(N)) .eq. 'OPOA2' .or.  &
+               trim(solsym(N)) .eq. 'OPOG1' .or.  trim(solsym(N)) .eq. 'OPOG2' .or.  &
+               trim(solsym(N)) .eq. 'POA1'  .or.  trim(solsym(N)) .eq. 'POA2'  .or.  &
+               trim(solsym(N)) .eq. 'POG1'  .or.  trim(solsym(N)) .eq. 'POG2'  .or.  &
+               trim(solsym(N)) .eq. 'PRPE'  .or.  trim(solsym(N)) .eq. 'TOLU'  .or.  &
+               trim(solsym(N)) .eq. 'XYLE') then
+                HcoState%Spc(N)%EmMW_g    = 12.0_hp
+            else
+                HcoState%Spc(N)%EmMW_g    = adv_mass(N)     ! emitted mol. weight [g/mol]
+            endif
+
+            ! Emitted molecules per molecules of species [1]
+            ! Most spc. 1.0, for the species in the list above, will be # of moles carbon
+            ! per mole species.
+
+            ! FIXME: To resolve special case
+            HcoState%Spc(N)%MolecRatio    = 1.0_hp
+
+            ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
+            ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
+            ! (hplin, 3/29/20)
+            ! HcoState%Spc(N)%HenryK0 ! [M/atm]
+            ! HcoState%Spc(N)%HenryCR ! [K]
+            ! HcoState%Spc(N)%HenryPKA ! [1]
+
+            ! Write to log too
+            if(masterproc) then
+                write(iulog,*) ">> Spc", N, " = ", solsym(N), "MW_g", adv_mass(N), "EmMW_g", HcoState%Spc(N)%EmMW_g
+                call HCO_Spec2Log(HcoState, N)
+            endif
+        enddo
+
+        if(masterproc) write(iulog,*) "> Set HEMCO species info OK!"
+
+        !-----------------------------------------------------------------------
+        ! Register HEMCO Grid information
+        !-----------------------------------------------------------------------
+        ! Note that HEMCO running in the CAM environment is entirely MPI and
+        ! we use the grid dimensions of the local PET. Thus, remember that all
+        ! data and fields are sized my_* and NOT the global indices, although
+        ! all PETs are aware. This is similar to ids, ide, jds, jde ... versus
+        ! its, ite, jts, jte ... in WRF, but here we use my_IS, my_IE, my_JS...
+        !
+        ! The vertical dimension is not decomposed and follows the CAM vertical,
+        ! whatever that is. This information is all abstracted and propagated within
+        ! HCO_ESMF_Grid. (hplin, 3/29/20)
+
+        HcoState%NX = my_IM
+        HcoState%NY = my_JM
+        HcoState%NZ = LM
+
+        ! Pass Ap, Bp values, units [Pa], [unitless]
+        ! later remove masterproc
+        call HCO_VertGrid_Define(HcoState%Config,                &
+                                 zGrid = HcoState%Grid%zGrid,    &
+                                 nz    = HcoState%NZ,            &
+                                 Ap    = Ap,                     &
+                                 Bp    = Bp,                     &
+                                 RC    = HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        ! Point to grid variables
+        HcoState%Grid%XMID%Val         => XMid   (my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%YMID%Val         => YMid   (my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%XEdge%Val        => XEdge  (my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%YEdge%Val        => YEdge  (my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%YSin%Val         => YSin   (my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%AREA_M2%Val      => AREA_M2(my_IS:my_IE, my_JS:my_JE)
+
+        ! Debug
+        write(6,*) "HCOI_Chunk_Init XMid, YMid(1,1)", HcoState%Grid%XMid%Val(1,1), &
+                                                      HcoState%Grid%YMid%Val(1,1), &
+                                                      HcoState%Grid%Area_m2%Val(1,1)
+
+        if(masterproc) write(iulog,*) "> Set HEMCO PET-local grid info OK!"
+
+        !-----------------------------------------------------------------------
         ! Initialize HEMCO!
         !-----------------------------------------------------------------------
-        
+        call HCO_Init(HcoState, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) then
 
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             ! End the splash screen
         endif
+
+        ! Just end the run here so we don't waste core hours..
+        call endrun("finished testing hplin bye")
 
     end subroutine HCOI_Chunk_Init
 !EOC
@@ -383,7 +616,6 @@ contains
         ! (hplin, 2/6/20)
         if(phase == 2) then
             ! Run the gridded component.
-            write(6,*) "HEMCO_CAM inside HCOI_Chunk_Run to enter GridComp, iam", iam
             call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
                                                 !exportState=HCO_GridCompState, &
                                                 !rc=RC)
@@ -475,8 +707,6 @@ contains
         real(ESMF_KIND_R8)                    :: dummy(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: dummy_CAM(1:LM, 1:my_CE)
 
-        write(6,*) "HEMCO_CAM: Inside GridComp", iam
-
         !-----------------------------------------------------------------------
         ! Update regridding file handles as necessary
         !-----------------------------------------------------------------------
@@ -494,8 +724,6 @@ contains
             write(iulog,*) "HEMCO_CAM: Inside GridComp: running HCO_GC_Run!"
         endif
 
-        write(6,*) "HEMCO_CAM: before dummy array"
-
         !-----------------------------------------------------------------------
         ! Do some dummy stuff here while we don't have actual "HEMCO"
         !-----------------------------------------------------------------------
@@ -504,9 +732,12 @@ contains
         dummy_CAM(:,:) = 0.0_r8
         do I = my_IS, my_IE
         do J = my_JS, my_JE
-            if(mod(int(XMid(I,J)), 2) == 0 .and. mod(int(YMid(I,J)), 2) == 0) then
-                dummy(I,J,1) = XMid(I,J)
-            endif
+            ! if(mod(int(XMid(I,J)), 2) == 0 .and. mod(int(YMid(I,J)), 2) == 0) then
+            !     dummy(I,J,1) = XMid(I,J)
+            ! endif
+
+            dummy(I,J,1) = XMid(I,J)
+            dummy(I,J,2) = YMid(I,J)
         enddo
         enddo
 
@@ -514,23 +745,12 @@ contains
             write(iulog,*) "HEMCO_CAM: Successful creation of dummy array!"
         endif
 
-        ! Write to history on hco_grid (hco_grid NOT working)
-        ! call HCO_Export_History_HCO3D("HCOg_TEST", dummy)
-
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Exported to HCOg_TEST via outfld!"
-        endif
-
-        write(6,*) "HEMCO_CAM: before dummy->dummy_CAM"
-
         ! Regrid to CAM physics mesh!
         call HCO_Grid_HCO2CAM_3D(dummy, dummy_CAM)
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Successful dummy regrid to CAM!"
         endif
-
-        write(6,*) "HEMCO_CAM: after dummy->dummy_CAM"
 
         ! Write to history on CAM mesh
         call HCO_Export_History_CAM3D("HCO_TEST", dummy_CAM)
