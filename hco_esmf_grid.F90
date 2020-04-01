@@ -45,9 +45,9 @@ module hco_esmf_grid
     public        :: HCO_Grid_Init
     public        :: HCO_Grid_UpdateRegrid
 
-    ! public        :: HCO_Grid_HCO2CAM_2D             ! Regrid HEMCO to CAM mesh on 2D field
+    public        :: HCO_Grid_HCO2CAM_2D             ! Regrid HEMCO to CAM mesh on 2D field
     public        :: HCO_Grid_HCO2CAM_3D             !                       ...on 3D field
-    ! public        :: HCO_Grid_CAM2HCO_2D             ! Regrid CAM mesh to HEMCO on 2D field
+    public        :: HCO_Grid_CAM2HCO_2D             ! Regrid CAM mesh to HEMCO on 2D field
     public        :: HCO_Grid_CAM2HCO_3D             !                       ...on 3D field
 
 !
@@ -1630,6 +1630,143 @@ contains
         endif
 
     end subroutine HCO_Grid_CAM2HCO_3D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_HCO2CAM_2D
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_HCO2CAM\_2D regrids a HEMCO lat-lon grid
+!  field (i,j) to CAM physics mesh (i).
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_HCO2CAM_2D(hcoArray, camArray)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldRegrid
+        use ESMF,               only: ESMF_TERMORDER_SRCSEQ
+
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+!
+! !INPUT PARAMETERS:
+!
+        real(r8),         intent(in)           :: hcoArray(my_IS:my_IE,my_JS:my_JE)
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8),         intent(inout)        :: camArray(1:my_CE)   ! Col and lev start on 1
+!
+! !REMARKS:
+!  (1) Used for 2-D fields, which are 1-D in CAM.
+!
+! !REVISION HISTORY:
+!  31 Mar 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_HCO2CAM_2D'
+        integer                     :: RC
+
+        call HCO_ESMF_Set2DHCO(HCO_2DFld, hcoArray, my_IS, my_IE, my_JS, my_JE)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after HCO_ESMF_Set2DHCO"
+        endif
+
+        call ESMF_FieldRegrid(HCO_2DFld, CAM_2DFld, HCO2CAM_RouteHandle_2D,     &
+                              termorderflag=ESMF_TERMORDER_SRCSEQ,              &
+                              checkflag=.true., rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after ESMF_FieldRegrid"
+        endif
+
+        ! HCO_ESMF_Get1DField(field_in, data_out, IS, IE)
+        ! (Physics "1D" fields on mesh are actually "2D" data)
+        call HCO_ESMF_Get1DField(CAM_2DFld, camArray, 1, my_CE)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after HCO_ESMF_Get1DField"
+        endif
+
+    end subroutine HCO_Grid_HCO2CAM_2D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Grid_CAM2HCO_2D
+!
+! !DESCRIPTION: Subroutine HCO\_Grid\_HCO2CAM\_2D regrids a HEMCO lat-lon grid
+!  field (i,j,l) to CAM physics mesh (k,i).
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Grid_CAM2HCO_2D(camArray, hcoArray)
+!
+! !USES:
+!
+        use ESMF,               only: ESMF_FieldRegrid, ESMF_TERMORDER_SRCSEQ
+
+        ! MPI Properties from CAM
+        use cam_logfile,        only: iulog
+        use spmd_utils,         only: masterproc
+!
+! !INPUT PARAMETERS:
+!
+        real(r8),         intent(in)           :: camArray(1:my_CE)   ! Col and lev start on 1
+!
+! !OUTPUT PARAMETERS:
+!
+        real(r8),         intent(inout)        :: hcoArray(my_IS:my_IE,my_JS:my_JE)
+!
+! !REVISION HISTORY:
+!  31 Mar 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_2D'
+        integer                     :: RC
+
+        ! HCO_ESMF_Set2DCAM(field, data, CS, CE)
+        call HCO_ESMF_Set2DCAM(CAM_2DFld, camArray, 1, my_CE)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after HCO_ESMF_Set2DCAM"
+        endif
+
+        call ESMF_FieldRegrid(CAM_2DFld, HCO_2DFld, CAM2HCO_RouteHandle_2D,     &
+                              termorderflag=ESMF_TERMORDER_SRCSEQ,              &
+                              checkflag=.true., rc=RC)
+        ASSERT_(RC==ESMF_SUCCESS)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after ESMF_FieldRegrid"
+        endif
+
+        call HCO_ESMF_Get2DField(HCO_2DFld, hcoArray, my_IS, my_IE, my_JS, my_JE)
+
+        if(masterproc) then
+            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after HCO_ESMF_Get2DField"
+        endif
+
+    end subroutine HCO_Grid_CAM2HCO_2D
 !EOC
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
