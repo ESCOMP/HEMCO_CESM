@@ -42,6 +42,9 @@ module hemco_interface
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
 
+    ! Time
+    use time_manager,             only: get_curr_time, get_prev_time, get_curr_date
+
     ! ESMF types
     use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
@@ -64,6 +67,8 @@ module hemco_interface
     private :: HCO_GC_SetServices
     private :: HCO_GC_Run
     private :: HCO_GC_Final
+
+    private :: HCOI_Allocate_All
 !
 ! !PUBLIC MEMBER FUNCTIONS:
 !
@@ -103,6 +108,29 @@ module hemco_interface
 
     type(HCO_State), pointer, public :: HcoState  => NULL()
     type(Ext_State), pointer, public :: ExtState  => NULL()
+
+    ! Last execution times for the HEMCO component. We are assuming that time
+    ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
+    integer                          :: last_HCO_day, last_HCO_second
+
+    ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
+    ! We have to store the fields because the regridding can only take place within the GridComp.
+    ! Fields are allocated after the internal grid is initialized (so my_* are avail)
+
+    ! Currently in hemco_interface.F90 for ease of devel, move to a container module later
+
+    ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
+    ! Arrays are flipped in order (k, i) for the regridder
+    real(r8), pointer                :: State_CAM_t(:,:)
+    real(r8), pointer                :: State_CAM_ps(:)
+    real(r8), pointer                :: State_CAM_pblh(:)
+
+    ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
+    ! HEMCO grid are set as POINTERs so it satisfies HEMCO which wants to point
+    real(r8), pointer                :: State_HCO_TK  (:,:,:)
+    real(r8), pointer                :: State_HCO_PSFC(:,:)   ! Wet?
+    real(r8), pointer                :: State_HCO_PBLH(:,:)   ! PBLH [m]
+
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -250,17 +278,39 @@ contains
         ! HEMCO properties
         integer                      :: nHcoSpc
 
+        ! Timing properties
+        integer                      :: year, month, day, tod
+        integer                      :: hour, minute, second, dt
+        integer                      :: prev_day, prev_s, now_day, now_s
+
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "HEMCO_CAM interface version 0.1"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
+            write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
         endif
 
         ! Assume success
         RC = ESMF_SUCCESS
         HMRC = HCO_SUCCESS
+
+        !-----------------------------------------------------------------------
+        ! Get time properties
+        !-----------------------------------------------------------------------
+        call get_prev_time(prev_day, prev_s) ! 0 0
+        call get_curr_time(now_day, now_s)   ! 0 0
+        call get_curr_date(year, month, day, tod) ! 2005 1 1 0
+
+        last_HCO_day    = now_day
+        last_HCO_second = now_s   ! This means first timestep is not ran
+
+        ! if(masterproc) then
+        !     write(iulog,*) "hco year,month,day,tod", year, month, day, tod
+        !     write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
+        !     write(iulog,*) "hco now_day, now_s", now_day, now_s
+        ! endif
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -316,6 +366,7 @@ contains
 
         if(masterproc) then
             write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
+            write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
         endif
 
         !-----------------------------------------------------------------------
@@ -326,6 +377,19 @@ contains
 
         if(masterproc) then
             write(iulog,*) "> First refresh of HEMCO Regrid descriptors"
+        endif
+
+        !-----------------------------------------------------------------------
+        ! Allocate HEMCO meteorological objects
+        ! We are allocating globally for the whole HEMCO component here. This may
+        ! clash if my_CE changes (multiple CAM instances). To be verified.
+        ! Should be a easy fix regardless, simply allocate and dealloc in the run
+        ! (hplin, 3/31/20)
+        !-----------------------------------------------------------------------
+        call HCOI_Allocate_All()
+
+        if(masterproc) then
+            write(iulog,*) "> Allocated HEMCO temporary met fields"
         endif
 
         !-----------------------------------------------------------------------
@@ -343,10 +407,20 @@ contains
         ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
         !
         ! This call should eventually be reflected elsewhere?
-        call addfld("HCO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
-                    'HEMCO 3-D Emissions Species TEST',             &
+        call addfld("NO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
+                    'HEMCO 3-D Emissions Species NO',             &
                     gridname="physgrid")
-        call add_default("HCO_TEST", 2, 'I')      ! Make this field always ON
+        call add_default("NO_TEST", 2, 'I')      ! Make this field always ON
+
+        call addfld("CO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
+                    'HEMCO 3-D Emissions Species CO',             &
+                    gridname="physgrid")
+        call add_default("CO_TEST", 2, 'I')      ! Make this field always ON
+
+        call addfld("NH3_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
+                    'HEMCO 3-D Emissions Species NH3',             &
+                    gridname="physgrid")
+        call add_default("NH3_TEST", 2, 'I')      ! Make this field always ON
 
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
@@ -359,7 +433,8 @@ contains
         call ConfigInit(HcoConfig, HMRC, nModelSpecies=gas_pcnst)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        ! HcoConfig%amIRoot   = masterproc ! to restore after update to trunk
+        !HcoConfig%amIRoot   = masterproc
+        HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
 
@@ -387,7 +462,8 @@ contains
 
         ! FIXME: Not implementing "Dry-run" functionality in HEMCO_CESM. (hplin, 3/27/20)
         ! Phase: 0 = all, 1 = sett and switches only, 2 = fields only
-        call Config_ReadFile(masterproc, HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
+        ! Forcing masterproc for now
+        call Config_ReadFile(.true., HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         ! Open the log file
@@ -410,10 +486,10 @@ contains
         if(masterproc) write(iulog,*) "> Initialize HEMCO state obj OK!"
 
         ! Emissions, chemistry and dynamics timestep [s]
-        ! !FIXME: Need to implement timestep manager component...
-        HcoState%TS_EMIS = 1.0
-        HcoState%TS_CHEM = 1.0
-        HcoState%TS_DYN  = 1.0
+        ! Assume 1h until given actual time in HCO_GC_Run!
+        HcoState%TS_EMIS = 3600.0
+        HcoState%TS_CHEM = 3600.0
+        HcoState%TS_DYN  = 3600.0
 
         ! Not a MAPL simulation. isESMF is deceiving.
         HcoState%Options%isESMF = .false.
@@ -540,16 +616,81 @@ contains
         call HCO_Init(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) then
-
-            write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
-            ! End the splash screen
-        endif
-
-        ! Just end the run here so we don't waste core hours..
-        call endrun("finished testing hplin bye")
+        if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
 
     end subroutine HCOI_Chunk_Init
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCOI_Allocate_All
+!
+! !DESCRIPTION: HCOI\_Allocate\_All allocates temporary met fields for use in
+!  HEMCO.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCOI_Allocate_All()
+!
+! !USES:
+!
+        use cam_logfile,      only: iulog
+        use spmd_utils,       only: masterproc
+!
+! !REMARKS:
+!  Fields are allocated here after initialization of the hco\_esmf\_grid.
+!  They are regridded inside the gridcomp.
+!  A "state conversion" to convert CAM met fields to GEOSFP format will
+!  need to be coordinated with fritzt later down the road (hplin, 3/27/20)
+!
+!  Note that arrays in CAM format stored in the HEMCO interface are (k, i) idxd
+!  for the regridder
+!
+! !REVISION HISTORY:
+!  31 Mar 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCOI_Allocate_All'
+        integer                      :: RC                   ! ESMF return code
+
+        ! Assume success
+        RC = ESMF_SUCCESS
+
+        ! Sanity check
+        if(masterproc) then
+            write(iulog,*) "> HCOI_Allocate_All entering"
+        endif
+
+        ! PBL height [m]
+        ! Comes from pbuf
+        allocate(State_CAM_pblh(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_HCO_PBLH(my_IM, my_JM), stat=RC)
+        ASSERT_(RC==0)
+
+        ! Surface pressure (wet) [Pa]
+        allocate(State_CAM_ps(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_HCO_PSFC(my_IM, my_JM), stat=RC)
+        ASSERT_(RC==0)
+
+        ! T
+        allocate(State_CAM_t (LM, my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_HCO_TK(my_IM, my_JM, LM), stat=RC)
+        ASSERT_(RC==0)
+
+    end subroutine HCOI_Allocate_All
 !EOC
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
@@ -571,6 +712,13 @@ contains
         use camsrfexch,     only: cam_in_t
         use physics_types,  only: physics_state
         use physics_buffer, only: physics_buffer_desc
+
+        ! Physics grid
+        use phys_grid,      only: get_ncols_p
+
+        ! CAM physics buffer (some fields are here and some are in phys state)
+        use physics_buffer, only: pbuf_get_chunk, pbuf_get_field
+        use physics_buffer, only: pbuf_get_index
 
         ! Output and mpi
         use cam_logfile,    only: iulog
@@ -598,6 +746,13 @@ contains
         character(len=*), parameter  :: subname = 'HCOI_Chunk_Run'
         integer                      :: RC                        ! Return code
 
+        integer                      :: I, J, K, lchnk            ! Loop idx
+        integer                      :: ncol
+
+        type(physics_buffer_desc), pointer :: pbuf_chnk(:)        ! slice of pbuf
+        ! pbuf indices:
+        integer                      :: index_pblh
+
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Running HCOI_Chunk_Run phase", phase
         endif
@@ -615,6 +770,43 @@ contains
         ! run routine in the gridded component HCO_GC_Run.
         ! (hplin, 2/6/20)
         if(phase == 2) then
+            ! Regrid necessary physics quantities from the CAM grid to the HEMCO grid
+            ! Phase 0: Prepare necessary pbuf indices to retrieve data from the buffer...
+
+            ! TODO: This prep phase might possibly be better moved into initialization.
+            ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
+            index_pblh = pbuf_get_index('pblh')
+
+
+            ! Phase 1: Store the fields in hemco_interface (copy)
+            I = 0
+            do lchnk = begchunk, endchunk    ! loop over all chunks in the physics grid
+                ncol = get_ncols_p(lchnk)    ! columns per chunk
+                pbuf_chnk => pbuf_get_chunk(pbuf2d, lchnk) ! get pbuf for this chunk...
+
+                ! Gather data from pbuf before we proceed
+                ! 2-D Fields: Write directly to pointer (does not need alloc).
+                call pbuf_get_field(pbuf_chnk, index_pblh, State_CAM_pblh)
+
+                ! Loop through the chunks and levs now
+                ! Sanity check: Left indices should be I, and r.h.s. should be J!!!
+                ! If it differs, you are likely wrong and reading out of bounds.
+                ! Two hours of debugging a 1.5GPa surface pressure entry has resulted
+                ! in the above comments. (hplin, 3/31/20)
+                do J = 1, ncol               ! loop over columns in the chunk
+                    I = I + 1                ! advance one column
+
+                    ! 3-D Fields
+                    do K = 1, LM             !        chunk    col, lev
+                        State_CAM_t(K,I) = phys_state(lchnk)%t(J,K)
+                    enddo
+
+                    ! 2-D Fields
+                    State_CAM_ps(I) = phys_state(lchnk)%ps(J)
+
+                enddo
+            enddo
+
             ! Run the gridded component.
             call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
                                                 !exportState=HCO_GridCompState, &
@@ -676,10 +868,20 @@ contains
 !
 ! !USES:
 !
-        use cam_logfile,    only: iulog
-        use spmd_utils,     only: masterproc, iam
+        use cam_logfile,            only: iulog
+        use spmd_utils,             only: masterproc, iam
 
-        ! Includes actual HEMCO run routines...
+        ! HEMCO
+        use HCO_Interface_Common,   only: GetHcoVal, GetHcoDiagn
+        use HCO_Clock_Mod,          only: HcoClock_Set, HcoClock_Get
+        use HCO_Clock_Mod,          only: HcoClock_EmissionsDone
+        use HCO_Diagn_Mod,          only: HcoDiagn_AutoUpdate
+        use HCO_Driver_Mod,         only: HCO_Run
+        use HCO_FluxArr_Mod,        only: HCO_FluxArrReset
+        use HCO_GeoTools_Mod,       only: HCO_CalcVertGrid, HCO_SetPBLm
+
+        use HCO_State_Mod,          only: HCO_GetHcoId
+
 
 !
 ! !INPUT/OUTPUT PARAMETERS:
@@ -704,8 +906,41 @@ contains
         character(len=*),       parameter     :: subname = 'HCO_GC_Run'
 
         integer                               :: I, J, K
-        real(ESMF_KIND_R8)                    :: dummy(my_IS:my_IE, my_JS:my_JE, 1:LM)
-        real(ESMF_KIND_R8)                    :: dummy_CAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: TMP
+        logical                               :: FND
+
+        integer                               :: id_NO, id_CO, id_NH3
+        real(ESMF_KIND_R8)                    :: dummy_NO(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: dummy_NO_CAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: dummy_CO(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: dummy_CO_CAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: dummy_NH3(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: dummy_NH3_CAM(1:LM, 1:my_CE)
+
+        ! Timing properties
+        integer                      :: year, month, day, tod
+        integer                      :: hour, minute, second
+        integer                      :: prev_day, prev_s, now_day, now_s
+        integer                      :: tmp_currTOD
+
+        ! HEMCO vertical grid property pointers
+        ! NOTE: Hco_CalcVertGrid expects pointer-based arguments, so we must
+        ! make PEDGE be a pointer and allocate/deallocate it on each call.
+        real(hp), pointer            :: BXHEIGHT(:,:,:)    ! Grid box height      [m ]
+        real(hp), pointer            :: PEDGE   (:,:,:)    ! Pressure @ lvl edges [Pa]
+        real(hp), pointer            :: ZSFC    (:,:  )    ! Surface geopotential [m ]
+
+
+        real(hp), pointer            :: PBLM    (:,:  )    ! PBL height           [m ]
+        real(hp), pointer            :: PSFC    (:,:  )    ! Surface pressure     [Pa]
+        real(hp), pointer            :: TK      (:,:,:)    ! Temperature          [K ]
+
+        ! HEMCO return code
+        integer                      :: HMRC
+
+        ! Assume success
+        RC = ESMF_SUCCESS
+        HMRC = HCO_SUCCESS
 
         !-----------------------------------------------------------------------
         ! Update regridding file handles as necessary
@@ -714,52 +949,252 @@ contains
         ASSERT_(RC==ESMF_SUCCESS)
 
         if(masterproc) then
-            write(iulog,*) "> Reload (if necessary) of HEMCO Regrid descriptors"
+            write(iulog,*) "HEMCO_CAM: Reload (if necessary) of HEMCO Regrid descriptors"
         endif
+
+        !-----------------------------------------------------------------------
+        ! Get time properties
+        !-----------------------------------------------------------------------
+        call get_prev_time(prev_day, prev_s)
+        call get_curr_time(now_day, now_s)
+        call get_curr_date(year, month, day, tod)
+
+        if(masterproc) then
+            write(iulog,*) "hco year,month,day,tod", year, month, day, tod
+            write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
+            write(iulog,*) "hco now_day, now_s", now_day, now_s
+        endif
+        ! 2005 1 1 1800 | 0 0 | 0 1800
+        ! 2005 1 1 3600 | 0 1800 | 0 3600
+        ! 2005 1 1 5400 | 0 3600 | 0 5400
+        ! ...
+
+        ! Check if we have run HEMCO for this time step already. If yes can exit
+        if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
+            if(masterproc) then
+                write(iulog,*) "HEMCO_CAM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
+            endif
+
+            return
+        endif
+
+        ! Compute timestep
+        if(HcoState%TS_CHEM .ne. ((now_day - prev_day) * 86400.0 + now_s - prev_s)) then
+            HcoState%TS_EMIS = (now_day - prev_day) * 86400.0 + now_s - prev_s
+            HcoState%TS_CHEM = (now_day - prev_day) * 86400.0 + now_s - prev_s
+            HcoState%TS_DYN  = (now_day - prev_day) * 86400.0 + now_s - prev_s
+            if(masterproc) write(iulog,*) "HEMCO_CAM: Updated HEMCO timestep to ", HcoState%TS_CHEM
+        endif
+
+        ! Compute hour, minute, second (borrowed from tfritz)
+        hour = 0
+        minute = 0
+        do while(tmp_currTOD > 3600)
+            tmp_currTOD = tmp_currTOD - 3600
+            hour = hour + 1
+        enddo
+
+        do while(tmp_currTOD > 60)
+            tmp_currTOD = tmp_currTOD - 60
+            minute = minute + 1
+        enddo
+        second = tmp_currTOD
+
+        ! Update HEMCO clock
+        ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
+        ! and we want HEMCO to do the math for us. oh well
+        call HCOClock_Set(HcoState, year, month, day,  &
+                          hour, minute, second, IsEmisTime=.true., RC=HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+        
+        !-----------------------------------------------------------------------
+        ! Regrid necessary meteorological quantities
+        !-----------------------------------------------------------------------
+        call HCO_Grid_CAM2HCO_2D(State_CAM_ps,     State_HCO_PSFC  )
+        call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH  )
+        call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK    )
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO"
+
+            ! As a test... maybe we also need to flip in the vertical
+            ! write(iulog,*) State_HCO_TK(1,1,:)
+            ! write(iulog,*) "PSFC(1:2,:)"
+            ! write(iulog,*) State_HCO_PSFC(1:2,:) 
+
+            !write(iulog,*) "cam state%ps dump"
+            !write(iulog,*) State_CAM_ps
+
+            ! TK: 288 283 277 271 266 261 ... 250 251 252
+            ! Seems like the vertical is OK for now
+        endif
+        ! write(6,*) "HCO - PBLH(:,:), min, max", minval(State_HCO_PBLH(:,:)), maxval(State_HCO_PBLH(:,:))
+        ! write(6,*) State_HCO_PBLH(:,:)
+
+        ! write(6,*) "CAM - PBLH(:,:), min, max", minval(State_CAM_pblh(:)), maxval(State_CAM_pblh(:))
+        ! write(6,*) State_CAM_pblh(:)
+
+        ! write(6,*) "HCO - PSFC(:,:), min, max", minval(State_HCO_PSFC(:,:)), maxval(State_HCO_PSFC(:,:))
+        ! write(6,*) State_HCO_PSFC(:,:)
+
+        ! write(6,*) "CAM - ps(:,:), min, max", minval(State_CAM_ps(:)), maxval(State_CAM_ps(:))
+        ! write(6,*) State_CAM_ps(:)
+
+        ! write(6,*) "HCO - TK(:,:,1), min, max (gl)", minval(State_HCO_TK(:,:,:)), maxval(State_HCO_TK(:,:,:))
+        ! write(6,*) State_HCO_TK(:,:,1)
+
+        ! write(6,*) "CAM - TK(:,:), min, max", minval(State_CAM_t(1,:)), maxval(State_CAM_t(1,:))
+        ! write(6,*) State_CAM_t(1,:)
+
+        !-----------------------------------------------------------------------
+        ! Continue setting up HEMCO
+        !-----------------------------------------------------------------------
+
+        ! Reset all emission and deposition values.
+        call HCO_FluxArrReset(HcoState, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        !-----------------------------------------------------------------------
+        ! Get grid properties
+        !-----------------------------------------------------------------------
+        ! Calculate HEMCO vertical grid properties, e.g. PEDGE,
+        ! then PHIS, BXHEIGHT, T, ..., from GridEdge_Set
+        !
+        ! The below conversions mostly borrowed from tfritz's CESM2-GC.
+        ! HEMCO CalcVertGrid can approximate all quantities. We provide them with
+        ! PSFC (surface pressure), TK (temperature)
+        ! in the form of allocated pointers. The rest can be inferred from Ap, Bp
+        PSFC => State_HCO_PSFC
+        TK   => State_HCO_TK
+
+        call HCO_CalcVertGrid(HcoState, PSFC, ZSFC, TK, BXHEIGHT, PEDGE, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        ! Pass boundary layer height to HEMCO (PBLm = PBL mixing height) [m]
+        call HCO_SetPBLm(HcoState, FldName='PBL_HEIGHT', PBLM=State_HCO_PBLH, &
+                         DefVal=1000.0_hp, & ! default value
+                         RC=HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        !-----------------------------------------------------------------------
+        ! Set HEMCO options
+        !-----------------------------------------------------------------------
+        ! Range of species and emission categories.
+        ! Set Extension number ExtNr to 0, indicating that the core
+        ! module shall be executed.
+        HcoState%Options%SpcMin = 1
+        HcoState%Options%SpcMax = -1
+        HcoState%Options%CatMin = 1
+        HcoState%Options%CatMax = -1
+        HcoState%Options%ExtNr  = 0
+
+        ! Use temporary array?
+        HcoState%Options%FillBuffer = .FALSE.
 
         !-----------------------------------------------------------------------
         ! Run HEMCO!
         !-----------------------------------------------------------------------
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Inside GridComp: running HCO_GC_Run!"
-        endif
+
+        ! Run HCO core module
+        ! Pass phase as argument. Phase 1 will update the emissions list,
+        ! phase 2 will calculate the emissions. Emissions will be written into
+        ! the corresponding flux arrays in HcoState.
+        !
+        ! FIXME: hplin - setting false as last timestep of simulation. maybe see
+        ! if we can figure out from CAM if we are at run end and set to true
+        call HCO_Run( HcoState, 1, HMRC, IsEndStep=.false. )
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
+
+        call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
 
         !-----------------------------------------------------------------------
-        ! Do some dummy stuff here while we don't have actual "HEMCO"
+        ! Update "autofill" diagnostics.
+        ! Update all 'AutoFill' diagnostics. This makes sure that all
+        ! diagnostics fields with the 'AutoFill' flag are up-to-date. The
+        ! AutoFill flag is specified when creating a diagnostics container
+        ! (Diagn_Create).
         !-----------------------------------------------------------------------
-        ! This writes a striped grid to level 1 on lat-lon. Fun!
-        dummy(:,:,:) = 0.0_r8
-        dummy_CAM(:,:) = 0.0_r8
-        do I = my_IS, my_IE
+        call HcoDiagn_AutoUpdate(HcoState, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
+
+        !-----------------------------------------------------------------------
+        ! Tell HEMCO we are done for this timestep...
+        !-----------------------------------------------------------------------
+        call HcoClock_EmissionsDone(HcoState%Clock, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
+
+        !-----------------------------------------------------------------------
+        ! Do some testing and write emissions to the tape
+        !-----------------------------------------------------------------------
+        dummy_NO(:,:,:) = 0.0_r8
+        dummy_NO_CAM(:,:) = 0.0_r8
+        dummy_CO(:,:,:) = 0.0_r8
+        dummy_CO_CAM(:,:) = 0.0_r8
+        dummy_NH3(:,:,:) = 0.0_r8
+        dummy_NH3_CAM(:,:) = 0.0_r8
+
+        ! Get HEMCO emissions. Units are [kg/m2/s].
+        ! Output fluxes directly for now. If you want to add emis, need to mult by dt. This is either done here or in the chemistry before exporting. Need to coordinate. I say we give kg/m2/s to the underlying model.
+
+        ! Quick test here
+        id_NO = get_spc_ndx('NO')
+        id_CO = get_spc_ndx('CO')
+        id_NH3 = get_spc_ndx('NH3')
+        if(masterproc) write(iulog,*) "id NO, CO, NH3", id_NO, id_CO, id_NH3
+        if(masterproc) write(iulog,*) "hcoID NO, CO, NH3", HCO_GetHcoId('NO', HcoState), HCO_GetHcoId('CO', HcoState), HCO_GetHcoId('NH3', HcoState)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: Get Emis IDs"
+
+        do K = 1, LM
         do J = my_JS, my_JE
-            ! if(mod(int(XMid(I,J)), 2) == 0 .and. mod(int(YMid(I,J)), 2) == 0) then
-            !     dummy(I,J,1) = XMid(I,J)
-            ! endif
+        do I = my_IS, my_IE
+            call GetHcoVal(HcoState, ExtState, id_NO, I, J, K, FND, emis=TMP)
+            if(FND) dummy_NO(I,J,K) = TMP
 
-            dummy(I,J,1) = XMid(I,J)
-            dummy(I,J,2) = YMid(I,J)
+            call GetHcoVal(HcoState, ExtState, id_NH3, I, J, K, FND, emis=TMP)
+            if(FND) dummy_NH3(I,J,K) = TMP
+
+            call GetHcoVal(HcoState, ExtState, id_CO, I, J, K, FND, emis=TMP)
+            if(FND) dummy_CO(I,J,K) = TMP
         enddo
         enddo
+        enddo
 
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Successful creation of dummy array!"
-        endif
+        if(masterproc) write(iulog,*) "HEMCO_CAM: Get Emis"
 
         ! Regrid to CAM physics mesh!
-        call HCO_Grid_HCO2CAM_3D(dummy, dummy_CAM)
+        call HCO_Grid_HCO2CAM_3D(dummy_NO, dummy_NO_CAM)
+        call HCO_Grid_HCO2CAM_3D(dummy_CO, dummy_CO_CAM)
+        call HCO_Grid_HCO2CAM_3D(dummy_NH3, dummy_NH3_CAM)
 
         if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Successful dummy regrid to CAM!"
+            write(iulog,*) "HEMCO_CAM: Successful regrid to CAM!"
         endif
 
         ! Write to history on CAM mesh
-        call HCO_Export_History_CAM3D("HCO_TEST", dummy_CAM)
+        call HCO_Export_History_CAM3D("NO_TEST", dummy_NO_CAM)
+        call HCO_Export_History_CAM3D("CO_TEST", dummy_CO_CAM)
+        call HCO_Export_History_CAM3D("NH3_TEST", dummy_NH3_CAM)
 
         if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Export to HCO_TEST via outfld!"
+            write(iulog,*) "HEMCO_CAM: Export to TEST via outfld!"
         endif
 
-        ! ... stub ...
+        !-----------------------------------------------------------------------
+        ! Finished!
+        !-----------------------------------------------------------------------
+        ! Update last execution time
+        last_HCO_day    = now_day
+        last_HCO_second = now_s
 
         RC = ESMF_SUCCESS
 

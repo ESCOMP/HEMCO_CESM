@@ -1607,6 +1607,8 @@ contains
         character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_3D'
         integer                     :: RC
 
+        integer                     :: J, K
+
         ! (field, data, KS, KE, CS, CE)
         call HCO_ESMF_Set3DCAM(CAM_3DFld, camArray, 1, LM, 1, my_CE)
 
@@ -1627,6 +1629,24 @@ contains
 
         if(masterproc) then
             write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Get3DField"
+        endif
+
+
+        ! Kludge for periodic point
+        ! It seems like the last point for the PET in the x-edge direction is messed up,
+        ! because it is the "periodic" point wrapping around the globe. This part is
+        ! not smooth and needs to be manually extrapolated.
+        !
+        ! This is a kludge as we want to revisit the regrid mechanism later.
+        ! For now fix it by copying the edge, not IDAVG
+        if(my_IE .eq. IM) then
+            do K = 1, LM
+            do J = my_JS, my_JE
+                if(hcoArray(my_IE, J, K) .le. 0.000001_r8) then
+                    hcoArray(my_IE, J, K) = hcoArray(my_IE-1, J, K)
+                endif
+            enddo
+            enddo
         endif
 
     end subroutine HCO_Grid_CAM2HCO_3D
@@ -1744,6 +1764,8 @@ contains
         character(len=*), parameter :: subname = 'HCO_Grid_CAM2HCO_2D'
         integer                     :: RC
 
+        integer                     :: J
+
         ! HCO_ESMF_Set2DCAM(field, data, CS, CE)
         call HCO_ESMF_Set2DCAM(CAM_2DFld, camArray, 1, my_CE)
 
@@ -1764,6 +1786,21 @@ contains
 
         if(masterproc) then
             write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after HCO_ESMF_Get2DField"
+        endif
+
+        ! Kludge for periodic point
+        ! It seems like the last point for the PET in the x-edge direction is messed up,
+        ! because it is the "periodic" point wrapping around the globe. This part is
+        ! not smooth and needs to be manually extrapolated.
+        !
+        ! This is a kludge as we want to revisit the regrid mechanism later.
+        ! For now fix it by copying the edge, not IDAVG
+        if(my_IE .eq. IM) then
+            do J = my_JS, my_JE
+                if(hcoArray(my_IE, J) .le. 0.000001_r8) then
+                    hcoArray(my_IE, J) = hcoArray(my_IE-1, J)
+                endif
+            enddo
         endif
 
     end subroutine HCO_Grid_CAM2HCO_2D
@@ -1817,7 +1854,7 @@ contains
         fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
         do J = lbnd(2), ubnd(2)
             do I = lbnd(1), ubnd(1)
-                fptr(i,j) = data(i,j)
+                fptr(I,J) = data(I,J)
             enddo
         enddo
 
