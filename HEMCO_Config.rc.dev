@@ -64,7 +64,7 @@ Warnings:                    1
     --> UVALBEDO               :       true
     --> CCM_STRAT_Bry          :       true
     --> GMI_STRAT_OH           :       true
-    --> GMI_PROD_LOSS          :       true
+    --> GMI_PROD_LOSS          :       false
     --> UCX_PROD_LOSS          :       false
     --> OMOC_RATIO             :       false
     --> GMD_SFC_CH4            :       true

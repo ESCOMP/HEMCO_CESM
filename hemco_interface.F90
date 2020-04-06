@@ -422,6 +422,16 @@ contains
                     gridname="physgrid")
         call add_default("NH3_TEST", 2, 'I')      ! Make this field always ON
 
+        call addfld("PETID_CAM_TEST", (/'lev'/), 'I', '1',          &
+                    'HEMCO Debug, PETID written on CAM',             &
+                    gridname="physgrid")
+        call add_default("PETID_CAM_TEST", 2, 'I')      ! Make this field always ON
+
+        call addfld("PETID_HCO_TEST", (/'lev'/), 'I', '1',          &
+                    'HEMCO Debug, PETID written on HCO',             &
+                    gridname="physgrid")
+        call add_default("PETID_HCO_TEST", 2, 'I')      ! Make this field always ON
+
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
         !-----------------------------------------------------------------------
@@ -433,8 +443,8 @@ contains
         call ConfigInit(HcoConfig, HMRC, nModelSpecies=gas_pcnst)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        !HcoConfig%amIRoot   = masterproc
-        HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
+        HcoConfig%amIRoot   = masterproc
+        ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
 
@@ -462,8 +472,7 @@ contains
 
         ! FIXME: Not implementing "Dry-run" functionality in HEMCO_CESM. (hplin, 3/27/20)
         ! Phase: 0 = all, 1 = sett and switches only, 2 = fields only
-        ! Forcing masterproc for now
-        call Config_ReadFile(.true., HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
+        call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         ! Open the log file
@@ -472,7 +481,7 @@ contains
             ASSERT_(HMRC==HCO_SUCCESS)
         endif
 
-        call Config_ReadFile(masterproc, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
+        call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "> Read HEMCO configuration file OK!"
@@ -906,6 +915,7 @@ contains
         character(len=*),       parameter     :: subname = 'HCO_GC_Run'
 
         integer                               :: I, J, K
+        integer                               :: HI, HJ, HL
         real(ESMF_KIND_R8)                    :: TMP
         logical                               :: FND
 
@@ -916,6 +926,10 @@ contains
         real(ESMF_KIND_R8)                    :: dummy_CO_CAM(1:LM, 1:my_CE)
         real(ESMF_KIND_R8)                    :: dummy_NH3(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: dummy_NH3_CAM(1:LM, 1:my_CE)
+
+        real(ESMF_KIND_R8)                    :: dummy_0_CAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: dummy_1(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: dummy_1_CAM(1:LM, 1:my_CE)
 
         ! Timing properties
         integer                      :: year, month, day, tod
@@ -1142,6 +1156,9 @@ contains
         dummy_NH3(:,:,:) = 0.0_r8
         dummy_NH3_CAM(:,:) = 0.0_r8
 
+        dummy_0_CAM(:,:) = iam * 1.0_r8
+        dummy_1(:,:,:) = iam * 1.0_r8
+
         ! Get HEMCO emissions. Units are [kg/m2/s].
         ! Output fluxes directly for now. If you want to add emis, need to mult by dt. This is either done here or in the chemistry before exporting. Need to coordinate. I say we give kg/m2/s to the underlying model.
 
@@ -1155,15 +1172,18 @@ contains
         if(masterproc) write(iulog,*) "HEMCO_CAM: Get Emis IDs"
 
         do K = 1, LM
+            HL = K ! map to HEMCO index
         do J = my_JS, my_JE
+            HJ = J - my_JS + 1
         do I = my_IS, my_IE
-            call GetHcoVal(HcoState, ExtState, id_NO, I, J, K, FND, emis=TMP)
+            HI = I - my_IS + 1
+            call GetHcoVal(HcoState, ExtState, id_NO, HI, HJ, HL, FND, emis=TMP)
             if(FND) dummy_NO(I,J,K) = TMP
 
-            call GetHcoVal(HcoState, ExtState, id_NH3, I, J, K, FND, emis=TMP)
+            call GetHcoVal(HcoState, ExtState, id_NH3, HI, HJ, HL, FND, emis=TMP)
             if(FND) dummy_NH3(I,J,K) = TMP
 
-            call GetHcoVal(HcoState, ExtState, id_CO, I, J, K, FND, emis=TMP)
+            call GetHcoVal(HcoState, ExtState, id_CO, HI, HJ, HL, FND, emis=TMP)
             if(FND) dummy_CO(I,J,K) = TMP
         enddo
         enddo
@@ -1175,6 +1195,7 @@ contains
         call HCO_Grid_HCO2CAM_3D(dummy_NO, dummy_NO_CAM)
         call HCO_Grid_HCO2CAM_3D(dummy_CO, dummy_CO_CAM)
         call HCO_Grid_HCO2CAM_3D(dummy_NH3, dummy_NH3_CAM)
+        call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Successful regrid to CAM!"
@@ -1184,6 +1205,8 @@ contains
         call HCO_Export_History_CAM3D("NO_TEST", dummy_NO_CAM)
         call HCO_Export_History_CAM3D("CO_TEST", dummy_CO_CAM)
         call HCO_Export_History_CAM3D("NH3_TEST", dummy_NH3_CAM)
+        call HCO_Export_History_CAM3D("PETID_HCO_TEST", dummy_1_CAM)
+        call HCO_Export_History_CAM3D("PETID_CAM_TEST", dummy_0_CAM)
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Export to TEST via outfld!"
