@@ -822,18 +822,18 @@ contains
         call HCO_Grid_ESMF_CreateHCOField(HCO_3DFld, HCO_Grid, 'HCO_3DFLD', LM, RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) ">> HEMCO: HCO_PHYS and HCO_ fields initialized successfully"
-            call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
-                               computationalLBound=lbnd_hco,         &
-                               computationalUBound=ubnd_hco, rc=RC)
-            write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ", my_IS, my_IE, "ubnd = (", ubnd_hco, ")", my_JS, my_JE
+        ! if(masterproc) then
+        !     write(iulog,*) ">> HEMCO: HCO_PHYS and HCO_ fields initialized successfully"
+        !     call ESMF_FieldGet(HCO_3DFld, localDE=0, farrayPtr=fptr, &
+        !                        computationalLBound=lbnd_hco,         &
+        !                        computationalUBound=ubnd_hco, rc=RC)
+        !     write(iulog,*) ">> HEMCO: Debug HCO Field: lbnd = (", lbnd_hco, "), ", my_IS, my_IE, "ubnd = (", ubnd_hco, ")", my_JS, my_JE
         
-            call ESMF_FieldGet(CAM_3DFld, localDE=0, farrayPtr=fptr_cam, &
-                               computationalLBound=lbnd_cam,         &
-                               computationalUBound=ubnd_cam, rc=RC)
-            write(iulog,*) ">> HEMCO: Debug CAM Field: lbnd = (", lbnd_cam, "), ubnd = (", ubnd_cam, ")", my_CE
-        endif
+        !     call ESMF_FieldGet(CAM_3DFld, localDE=0, farrayPtr=fptr_cam, &
+        !                        computationalLBound=lbnd_cam,         &
+        !                        computationalUBound=ubnd_cam, rc=RC)
+        !     write(iulog,*) ">> HEMCO: Debug CAM Field: lbnd = (", lbnd_cam, "), ubnd = (", ubnd_cam, ")", my_CE
+        ! endif
 
         ! CAM -> HCO 2-D
         call ESMF_FieldRegridStore(                                &
@@ -1535,27 +1535,15 @@ contains
 
         call HCO_ESMF_Set3DHCO(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after HCO_ESMF_Set3DHCO"
-        endif
-
         call ESMF_FieldRegrid(HCO_3DFld, CAM_3DFld, HCO2CAM_RouteHandle_3D,     &
                               termorderflag=ESMF_TERMORDER_SRCSEQ,              &
                               checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after ESMF_FieldRegrid"
-        endif
-
         ! (field_in, data_out, IS, IE, JS, JE)
         ! For chunks, "I" is lev, "J" is chunk index, confusing, you are warned
         ! (Physics "2D" fields on mesh are actually "3D" data)
         call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE)
-
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_3D: after HCO_ESMF_Get2DField"
-        endif
 
     end subroutine HCO_Grid_HCO2CAM_3D
 !EOC
@@ -1612,25 +1600,12 @@ contains
         ! (field, data, KS, KE, CS, CE)
         call HCO_ESMF_Set3DCAM(CAM_3DFld, camArray, 1, LM, 1, my_CE)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Set3DCAM"
-        endif
-
         call ESMF_FieldRegrid(CAM_3DFld, HCO_3DFld, CAM2HCO_RouteHandle_3D,     &
                               termorderflag=ESMF_TERMORDER_SRCSEQ,              &
                               checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after ESMF_FieldRegrid"
-        endif
-
         call HCO_ESMF_Get3DField(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
-
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_3D: after HCO_ESMF_Get3DField"
-        endif
-
 
         ! Kludge for periodic point
         ! It seems like the last point for the PET in the x-edge direction is messed up,
@@ -1699,26 +1674,14 @@ contains
 
         call HCO_ESMF_Set2DHCO(HCO_2DFld, hcoArray, my_IS, my_IE, my_JS, my_JE)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after HCO_ESMF_Set2DHCO"
-        endif
-
         call ESMF_FieldRegrid(HCO_2DFld, CAM_2DFld, HCO2CAM_RouteHandle_2D,     &
                               termorderflag=ESMF_TERMORDER_SRCSEQ,              &
                               checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after ESMF_FieldRegrid"
-        endif
-
         ! HCO_ESMF_Get1DField(field_in, data_out, IS, IE)
         ! (Physics "1D" fields on mesh are actually "2D" data)
         call HCO_ESMF_Get1DField(CAM_2DFld, camArray, 1, my_CE)
-
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_HCO2CAM_2D: after HCO_ESMF_Get1DField"
-        endif
 
     end subroutine HCO_Grid_HCO2CAM_2D
 !EOC
@@ -1769,24 +1732,12 @@ contains
         ! HCO_ESMF_Set2DCAM(field, data, CS, CE)
         call HCO_ESMF_Set2DCAM(CAM_2DFld, camArray, 1, my_CE)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after HCO_ESMF_Set2DCAM"
-        endif
-
         call ESMF_FieldRegrid(CAM_2DFld, HCO_2DFld, CAM2HCO_RouteHandle_2D,     &
                               termorderflag=ESMF_TERMORDER_SRCSEQ,              &
                               checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after ESMF_FieldRegrid"
-        endif
-
         call HCO_ESMF_Get2DField(HCO_2DFld, hcoArray, my_IS, my_IE, my_JS, my_JE)
-
-        if(masterproc) then
-            write(iulog,*) "> in HCO_Grid_CAM2HCO_2D: after HCO_ESMF_Get2DField"
-        endif
 
         ! Kludge for periodic point
         ! It seems like the last point for the PET in the x-edge direction is messed up,
