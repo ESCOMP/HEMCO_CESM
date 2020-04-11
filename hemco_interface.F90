@@ -266,17 +266,17 @@ contains
         ! cam_instance's inst_name, I think this may cause namespace clashing.
         ! So I'll be prefixing this with hco_ just incase.
         character(len=32)            :: HCO_GC_InstName = ''
+        type(ESMF_VM)                :: hco_esmf_vm
 
         ! MPI stuff
         integer                      :: localPET, PETcount
-
-        ! PETs for each instance of the physics grid
-        integer, allocatable         :: PETlist(:)
-
-        type(ESMF_VM)                :: hco_esmf_vm
+        integer, allocatable         :: PETlist(:)           ! PETs for each instance of the physics grid
 
         ! HEMCO properties
         integer                      :: nHcoSpc
+
+        ! Temporary string for species naming in exports
+        character(len=128)           :: exportName, exportDesc
 
         ! Timing properties
         integer                      :: year, month, day, tod
@@ -305,12 +305,6 @@ contains
 
         last_HCO_day    = now_day
         last_HCO_second = now_s   ! This means first timestep is not ran
-
-        ! if(masterproc) then
-        !     write(iulog,*) "hco year,month,day,tod", year, month, day, tod
-        !     write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
-        !     write(iulog,*) "hco now_day, now_s", now_day, now_s
-        ! endif
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -407,21 +401,6 @@ contains
         ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
         !
         ! This call should eventually be reflected elsewhere?
-        call addfld("NO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
-                    'HEMCO 3-D Emissions Species NO',             &
-                    gridname="physgrid")
-        call add_default("NO_TEST", 2, 'I')      ! Make this field always ON
-
-        call addfld("CO_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
-                    'HEMCO 3-D Emissions Species CO',             &
-                    gridname="physgrid")
-        call add_default("CO_TEST", 2, 'I')      ! Make this field always ON
-
-        call addfld("NH3_TEST", (/'lev'/), 'I', 'kg/m2/s',          &
-                    'HEMCO 3-D Emissions Species NH3',             &
-                    gridname="physgrid")
-        call add_default("NH3_TEST", 2, 'I')      ! Make this field always ON
-
         call addfld("PETID_CAM_TEST", (/'lev'/), 'I', '1',          &
                     'HEMCO Debug, PETID written on CAM',             &
                     gridname="physgrid")
@@ -449,7 +428,7 @@ contains
         HcoConfig%GridRes   = ''
 
         !-----------------------------------------------------------------------
-        ! Retrieve the species list
+        ! Retrieve the species list and register exports
         !-----------------------------------------------------------------------
         nHcoSpc             = gas_pcnst          ! # of hco species? using gas
 
@@ -463,6 +442,25 @@ contains
         do N = 1, nHcoSpc
             HcoConfig%ModelSpc(N)%ModID   = N ! model id
             HcoConfig%ModelSpc(N)%SpcName = trim(solsym(N))
+
+            !----------------------------------------------
+            ! Register export properties.
+            !----------------------------------------------
+            ! History output (this will be moved to hco_cam_exports soon hopefully)
+
+            ! TODO (hplin): Writes to tape 2 by default, add namelist option to force it
+            ! to go in a different tape? Or abide to CAM conventions...
+            exportName = 'HCO_' // trim(solsym(N))
+            exportDesc = "HEMCO 3-D Emissions Species " // trim(solsym(N))
+            call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
+                        trim(exportDesc),                               &
+                        gridname='physgrid')
+            call add_default(trim(exportName), 2, 'I') ! On by default
+
+            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+
+            ! Physics buffer
+            ! call HCO_Export_Pbuf_AddField(exportName, 3, N)
         enddo
 
         !-----------------------------------------------------------------------
@@ -613,9 +611,9 @@ contains
         HcoState%Grid%AREA_M2%Val      => AREA_M2(my_IS:my_IE, my_JS:my_JE)
 
         ! Debug
-        write(6,*) "HCOI_Chunk_Init XMid, YMid(1,1)", HcoState%Grid%XMid%Val(1,1), &
-                                                      HcoState%Grid%YMid%Val(1,1), &
-                                                      HcoState%Grid%Area_m2%Val(1,1)
+        ! write(6,*) "HCOI_Chunk_Init XMid, YMid(1,1)", HcoState%Grid%XMid%Val(1,1), &
+        !                                               HcoState%Grid%YMid%Val(1,1), &
+        !                                               HcoState%Grid%Area_m2%Val(1,1)
 
         if(masterproc) write(iulog,*) "> Set HEMCO PET-local grid info OK!"
 
@@ -916,17 +914,16 @@ contains
 
         integer                               :: I, J, K
         integer                               :: HI, HJ, HL
+
+        ! Temporaries for exports
         real(ESMF_KIND_R8)                    :: TMP
         logical                               :: FND
+        character(len=128)                    :: exportName
+        integer                               :: spcID
+        real(ESMF_KIND_R8)                    :: exportFldHco(my_IS:my_IE, my_JS:my_JE, 1:LM)
+        real(ESMF_KIND_R8)                    :: exportFldCAM(1:LM, 1:my_CE)
 
-        integer                               :: id_NO, id_CO, id_NH3
-        real(ESMF_KIND_R8)                    :: dummy_NO(my_IS:my_IE, my_JS:my_JE, 1:LM)
-        real(ESMF_KIND_R8)                    :: dummy_NO_CAM(1:LM, 1:my_CE)
-        real(ESMF_KIND_R8)                    :: dummy_CO(my_IS:my_IE, my_JS:my_JE, 1:LM)
-        real(ESMF_KIND_R8)                    :: dummy_CO_CAM(1:LM, 1:my_CE)
-        real(ESMF_KIND_R8)                    :: dummy_NH3(my_IS:my_IE, my_JS:my_JE, 1:LM)
-        real(ESMF_KIND_R8)                    :: dummy_NH3_CAM(1:LM, 1:my_CE)
-
+        ! For debug dummies
         real(ESMF_KIND_R8)                    :: dummy_0_CAM(1:LM, 1:my_CE)
         real(ESMF_KIND_R8)                    :: dummy_1(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: dummy_1_CAM(1:LM, 1:my_CE)
@@ -1149,62 +1146,53 @@ contains
         !-----------------------------------------------------------------------
         ! Do some testing and write emissions to the tape
         !-----------------------------------------------------------------------
-        dummy_NO(:,:,:) = 0.0_r8
-        dummy_NO_CAM(:,:) = 0.0_r8
-        dummy_CO(:,:,:) = 0.0_r8
-        dummy_CO_CAM(:,:) = 0.0_r8
-        dummy_NH3(:,:,:) = 0.0_r8
-        dummy_NH3_CAM(:,:) = 0.0_r8
+
+        ! For each species...
+        do spcID = 1, HcoConfig%nModelSpc
+            ! Zero out quantities first
+            exportFldHco(:,:,:) = 0.0_r8
+            exportFldCAM(:,:)   = 0.0_r8
+
+            ! Build history / pbuf field name (HCO_NO, HCO_CO, etc.)
+            exportName = 'HCO_' // trim(HcoConfig%ModelSpc(spcID)%SpcName)
+            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Begin exporting " // trim(exportName)
+
+            ! Get HEMCO emissions flux [kg/m2/s].
+            do K = 1, LM
+                HL = K                ! map to HEMCO index
+            do J = my_JS, my_JE
+                HJ = J - my_JS + 1
+            do I = my_IS, my_IE
+                HI = I - my_IS + 1
+
+                ! Maybe no need to call GetHcoVal and just directly grab the pointer
+                ! instead?
+                call GetHcoVal(HcoState, ExtState, spcID, HI, HJ, HL, FND, emis=TMP)
+                if(FND) exportFldHco(I,J,K) = TMP
+            enddo
+            enddo
+            enddo
+            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
+
+            ! Regrid exportFldHco to CAM grid...
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Regridded " // trim(exportName)
+
+            ! Write to history on CAM mesh
+            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
+
+            ! Write to physics buffer
+
+        enddo
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
         dummy_1(:,:,:) = iam * 1.0_r8
 
-        ! Get HEMCO emissions. Units are [kg/m2/s].
-        ! Output fluxes directly for now. If you want to add emis, need to mult by dt. This is either done here or in the chemistry before exporting. Need to coordinate. I say we give kg/m2/s to the underlying model.
-
-        ! Quick test here
-        id_NO = get_spc_ndx('NO')
-        id_CO = get_spc_ndx('CO')
-        id_NH3 = get_spc_ndx('NH3')
-        if(masterproc) write(iulog,*) "id NO, CO, NH3", id_NO, id_CO, id_NH3
-        if(masterproc) write(iulog,*) "hcoID NO, CO, NH3", HCO_GetHcoId('NO', HcoState), HCO_GetHcoId('CO', HcoState), HCO_GetHcoId('NH3', HcoState)
-
-        if(masterproc) write(iulog,*) "HEMCO_CAM: Get Emis IDs"
-
-        do K = 1, LM
-            HL = K ! map to HEMCO index
-        do J = my_JS, my_JE
-            HJ = J - my_JS + 1
-        do I = my_IS, my_IE
-            HI = I - my_IS + 1
-            call GetHcoVal(HcoState, ExtState, id_NO, HI, HJ, HL, FND, emis=TMP)
-            if(FND) dummy_NO(I,J,K) = TMP
-
-            call GetHcoVal(HcoState, ExtState, id_NH3, HI, HJ, HL, FND, emis=TMP)
-            if(FND) dummy_NH3(I,J,K) = TMP
-
-            call GetHcoVal(HcoState, ExtState, id_CO, HI, HJ, HL, FND, emis=TMP)
-            if(FND) dummy_CO(I,J,K) = TMP
-        enddo
-        enddo
-        enddo
-
-        if(masterproc) write(iulog,*) "HEMCO_CAM: Get Emis"
-
         ! Regrid to CAM physics mesh!
-        call HCO_Grid_HCO2CAM_3D(dummy_NO, dummy_NO_CAM)
-        call HCO_Grid_HCO2CAM_3D(dummy_CO, dummy_CO_CAM)
-        call HCO_Grid_HCO2CAM_3D(dummy_NH3, dummy_NH3_CAM)
         call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
 
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Successful regrid to CAM!"
-        endif
-
         ! Write to history on CAM mesh
-        call HCO_Export_History_CAM3D("NO_TEST", dummy_NO_CAM)
-        call HCO_Export_History_CAM3D("CO_TEST", dummy_CO_CAM)
-        call HCO_Export_History_CAM3D("NH3_TEST", dummy_NH3_CAM)
         call HCO_Export_History_CAM3D("PETID_HCO_TEST", dummy_1_CAM)
         call HCO_Export_History_CAM3D("PETID_CAM_TEST", dummy_0_CAM)
 

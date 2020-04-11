@@ -1,3 +1,5 @@
+#define VERIFY_(A) if(.not.HCO_ESMF_VRFY(A,subname,__LINE__))call exit(-1)
+#define ASSERT_(A) if(.not.HCO_ESMF_ASRT(A,subname,__LINE__))call exit(-1)
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
 !------------------------------------------------------------------------------
@@ -17,8 +19,12 @@ module hco_cam_exports
 !
 ! !USES:
 !
-    use shr_kind_mod,             only: r8 => shr_kind_r8
+    ! ESMF function wrappers
+    use hco_esmf_wrappers
+    use ESMF,                     only: ESMF_SUCCESS
 
+    use shr_kind_mod,             only: r8 => shr_kind_r8
+    use physics_buffer,           only: dtype_r8
 
     ! Controls
     use cam_abortutils,           only: endrun      ! fatal terminator
@@ -35,7 +41,6 @@ module hco_cam_exports
     use cam_history,              only: outfld      ! output field to history
 
     ! Physics buffer
-    use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
 
     implicit none
     private
@@ -45,6 +50,9 @@ module hco_cam_exports
     public    :: HCO_Exports_Init
     public    :: HCO_Export_History_HCO3D
     public    :: HCO_Export_History_CAM3D
+
+    public    :: HCO_Export_Pbuf_AddField
+    !public    :: HCO_Export_Pbuf_CAM3D
 !
 ! !REMARKS:
 !  This module should NOT be aware of particular chemical constituents. It should
@@ -57,13 +65,25 @@ module hco_cam_exports
 !  usually after regridding back to the physics chunk so it fits in pbuf format.
 !
 !  History output doesn't need regrid as we register the HCO grid with cam_history
-!  at initialization here. (Will it work? We will see)
+!  at initialization here. (Will it work? We will see) (No it does not, hplin 4/10/20)
+!
+!  For Pbuf-based output (to pass to other components):
+!  - pbuf_idx_map() is a fixed-size array to store species-ID-to-pbuf-ID mapping.
+!    However, not all data HEMCO reads in are species. In this case, the idx_map will not
+!    be used (pass hcoID=-1), and we will attempt to look up the field through pbuf_get_field
+!    as usual. This may be slow, but always reliable. pbuf_idx_map is a convenience tool.
+!  - All pbuf exports are on the CAM grid. Regrid data before passing in.
 !
 ! !REVISION HISTORY:
 !  25 Feb 2020 - H.P. Lin    - Initial version
+!  10 Apr 2020 - H.P. Lin    - Added pbuf functionality
 !EOP
 !------------------------------------------------------------------------------
 !BOC
+!
+! !PRIVATE TYPES:
+!
+    integer                    :: pbuf_idx_map(1024)      ! Mapping of species IDX to pbuf ID
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -156,6 +176,12 @@ contains
         if(masterproc) then
             write(iulog,*) ">> Registered HEMCO hco_grid in CAM for history exports"
         endif
+
+        !-----------------------------------------------------------------------
+        ! Set pbuf_idx_map to magic number indicating that this buffer
+        ! is unassigned
+        !-----------------------------------------------------------------------
+        pbuf_idx_map(:) = -233
 
     end subroutine HCO_Exports_Init
 !EOC
@@ -296,9 +322,10 @@ contains
 
         real(r8)                     :: tmpfld_ik(pcols, pver)   ! Temporary array for per-column data (i, k)
 
-        if(.not. hist_fld_active(fldname)) then
+        if(.not. hist_fld_active(trim(fldname))) then
             ! This routine is ALWAYS called but may fail silently if this history field
             ! is not to be outputted.
+            ! if(masterproc) write(iulog,*) "HCO_Export_History_CAM3D: Cannot export", trim(fldname), " (not active)"
             return
         endif
 
@@ -316,10 +343,96 @@ contains
 
             ! Write to outfld chunk by chunk
             ! write(6,*) "hco_cam_exports before writing ncol, lchnk, ", ncol, lchnk
-            call outfld(fldname, tmpfld_ik(:ncol, :), ncol, lchnk)
+            call outfld(trim(fldname), tmpfld_ik(:ncol, :), ncol, lchnk)
             ! write(6,*) "hco_cam_exports writing ncol, lchnk, ", ncol, lchnk
         enddo
 
     end subroutine HCO_Export_History_CAM3D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Export_Pbuf_AddField
+!
+! !DESCRIPTION: Adds to the physics buffer a HEMCO field for export to the chem-
+!  istry. We wrap this here so we can control the persistence and add a prefix.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Export_Pbuf_AddField(fldname, dims, hcoID)
+!
+! !USES:
+!
+        use ppgrid,                   only: pcols, pver
+        use physics_buffer,           only: pbuf_add_field
+        use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
+
+        use spmd_utils,               only: iam, masterproc
+!
+! !INPUT PARAMETERS:
+!
+        character(len=*), intent(in) :: fldname               ! Field name
+        integer, intent(in)          :: dims                  ! 2 or 3 dimensions data?
+        integer, intent(in), optional:: hcoID                 ! Species ID
+!
+! !REMARKS:
+!  Persistence is 'physpkg' for now, which means the fields are alloc/dealloc at
+!  the beginning/end of each physics time step.
+!
+!  We add a prefix hco_ to all the fields, to prevent namespace clashing.
+!
+!  All fields are exported in CAM grid format, either 2D or 3D.
+!
+!  Now playing: Lemon
+!  "Ima demo anata wa watashi no hikari" / Even now you are still my light
+!
+! !REVISION HISTORY:
+!  10 Apr 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCO_Export_Pbuf_AddField'
+        character(len=255)           :: fldname_ns
+
+        integer                      :: spcID, tmpIdx
+
+        ! Create field name and verify IDs
+        fldname_ns = 'HCO_' // trim(fldname)
+        if(present(hcoID)) then
+            spcID = hcoID
+        else
+            spcID = -1
+        endif
+
+        ! Verify if slot free
+        if(spcID /= -1) then
+            ASSERT_(pbuf_idx_map(spcID) == -233)
+        endif
+
+        ! Add to pbuf field
+        if(dims == 2) then
+            call pbuf_add_field(trim(fldname_ns), 'physpkg', dtype_r8,  &
+                                (/pcols/), tmpIdx)
+        elseif(dims == 3) then
+            call pbuf_add_field(trim(fldname_ns), 'physpkg', dtype_r8,  &
+                                (/pcols,pver/), tmpIdx)
+        else
+            ASSERT_(.false.)
+        endif
+
+        ! Save field to mapping
+        if(spcID /= -1) then
+            pbuf_idx_map(spcID) = tmpIdx
+        endif
+
+        ! Log
+        if(masterproc) write(iulog,*) "Added field " // trim(fldname_ns) // " to physpkg pbuf, idx", tmpidx, " spcID", spcID
+    end subroutine HCO_Export_Pbuf_AddField
 !EOC
 end module hco_cam_exports
