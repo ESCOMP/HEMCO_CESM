@@ -455,12 +455,12 @@ contains
             call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
                         trim(exportDesc),                               &
                         gridname='physgrid')
-            call add_default(trim(exportName), 2, 'I') ! On by default
+            call add_default(exportName, 2, 'I') ! On by default
 
             if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! Physics buffer
-            ! call HCO_Export_Pbuf_AddField(exportName, 3, N)
+            call HCO_Export_Pbuf_AddField(exportName, 3, hcoID=N)
         enddo
 
         !-----------------------------------------------------------------------
@@ -777,6 +777,9 @@ contains
         ! run routine in the gridded component HCO_GC_Run.
         ! (hplin, 2/6/20)
         if(phase == 2) then
+            ! Pass the pbuf to the hco_cam_exports component so she has it...
+            hco_pbuf2d => pbuf2d
+
             ! Regrid necessary physics quantities from the CAM grid to the HEMCO grid
             ! Phase 0: Prepare necessary pbuf indices to retrieve data from the buffer...
 
@@ -998,6 +1001,7 @@ contains
         endif
 
         ! Compute hour, minute, second (borrowed from tfritz)
+        tmp_currTOD = tod
         hour = 0
         minute = 0
         do while(tmp_currTOD > 3600)
@@ -1014,6 +1018,12 @@ contains
         ! Update HEMCO clock
         ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us. oh well
+
+        if(masterproc) then
+            write(6,*) "HEMCO_CAM: Updating HEMCO clock to set", year, month, day, hour, minute, second
+            write(6,*) "HEMCO_CAM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
+        endif
+
         call HCOClock_Set(HcoState, year, month, day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -1182,8 +1192,8 @@ contains
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
             ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
 
-            ! Write to physics buffer
-
+            ! Write to physics buffer (pass model name)
+            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
         enddo
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
@@ -1197,7 +1207,7 @@ contains
         call HCO_Export_History_CAM3D("PETID_CAM_TEST", dummy_0_CAM)
 
         if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Export to TEST via outfld!"
+            write(iulog,*) "HEMCO_CAM: Exports completed for this timestep!"
         endif
 
         !-----------------------------------------------------------------------

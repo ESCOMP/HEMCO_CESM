@@ -41,6 +41,7 @@ module hco_cam_exports
     use cam_history,              only: outfld      ! output field to history
 
     ! Physics buffer
+    use physics_buffer,           only: physics_buffer_desc
 
     implicit none
     private
@@ -52,7 +53,7 @@ module hco_cam_exports
     public    :: HCO_Export_History_CAM3D
 
     public    :: HCO_Export_Pbuf_AddField
-    !public    :: HCO_Export_Pbuf_CAM3D
+    public    :: HCO_Export_Pbuf_CAM3D
 !
 ! !REMARKS:
 !  This module should NOT be aware of particular chemical constituents. It should
@@ -80,6 +81,11 @@ module hco_cam_exports
 !EOP
 !------------------------------------------------------------------------------
 !BOC
+!
+! !PUBLIC TYPES:
+!
+    type(physics_buffer_desc), &
+               public, pointer :: hco_pbuf2d(:,:) ! Pointer to the pbuf
 !
 ! !PRIVATE TYPES:
 !
@@ -433,6 +439,113 @@ contains
 
         ! Log
         if(masterproc) write(iulog,*) "Added field " // trim(fldname_ns) // " to physpkg pbuf, idx", tmpidx, " spcID", spcID
+
     end subroutine HCO_Export_Pbuf_AddField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Export_Pbuf_CAM3D
+!
+! !DESCRIPTION: Adds to the physics buffer a HEMCO field for export to the chem-
+!  istry. We wrap this here so we can control the persistence and add a prefix.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Export_Pbuf_CAM3D(fldname, hcoID, array)
+!
+! !USES:
+!
+        use ppgrid,                   only: pcols, pver
+        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
+
+        use spmd_utils,               only: iam, masterproc
+!
+! !INPUT PARAMETERS:
+!
+        character(len=*), intent(in) :: fldname               ! Field name
+        integer, intent(in), optional:: hcoID                 ! Species ID
+        real(r8),         intent(in) :: array(1:LM, 1:my_CE)
+!
+! !REMARKS:
+!  pcols: maximum number of columns in a chunk
+!  each pbuf is independent in each chunk, so write chunk-by-chunk, column-by-column
+!
+!  The pointer copy of pbuf2d is right there at the top of the module.
+!  It is updated at every time step by hemco_interface::HCOI_Chunk_Run, for lack of a
+!  better method to propagate it to inside the gridded component.
+!
+! !REVISION HISTORY:
+!  10 Apr 2020 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCO_Export_Pbuf_CAM3D'
+        character(len=255)           :: fldname_ns
+
+        integer                      :: spcID, tmpIdx
+
+        integer                      :: lchnk, ncol
+        integer                      :: I, K, J
+        type(physics_buffer_desc), pointer :: pbuf_chnk(:)       ! slice of pbuf in chnk
+        real(r8), pointer            :: pbuf_ik(:,:)     ! Pointer to pbuf data (/pcols,pver/)
+
+        ! Create field name and verify IDs
+        fldname_ns = 'HCO_' // trim(fldname)
+        if(present(hcoID)) then
+            spcID = hcoID
+        else
+            spcID = -1
+        endif
+
+        ! Verify if slot occupied
+        if(spcID /= -1) then
+            if(pbuf_idx_map(spcID) == -233) then
+                if(masterproc) write(iulog,*) "HCO_Export_Pbuf_CAM3D: Field not found", spcID, fldname_ns
+                return 
+            endif
+            tmpIdx = pbuf_idx_map(spcID)
+        else
+            tmpIdx = pbuf_get_index(fldname_ns)
+            if(tmpIdx < 0) then
+                if(masterproc) write(iulog,*) "HCO_Export_Pbuf_CAM3D: Field not found", spcID, fldname_ns
+                return
+            endif
+        endif
+
+        ! For all chunks on this PET
+        J = 0
+        do lchnk = begchunk, endchunk
+            ncol = get_ncols_p(lchnk)
+            pbuf_chnk => pbuf_get_chunk(hco_pbuf2d, lchnk)       ! slice of pbuf for this chnk
+
+            ! Get this pointer from pbuf
+            call pbuf_get_field(pbuf_chnk, tmpIdx, pbuf_ik)
+
+            if(.not. associated(pbuf_ik)) then
+                ! Uh-oh, potentially fatal. Throw a tantrum
+                write(6,*) "HCO_Export_Pbuf_CAM3D: FATAL at lchnk", lchnk, " unassoc pbuf_get_field" // trim(fldname_ns) // " idx:", tmpIdx
+                ASSERT_(.false.)
+            endif
+
+            ! For all columns in each chunk, organize the data
+            do I = 1, ncol
+                J = J + 1   ! Advance one column in the physics mesh array
+                do K = 1, pver
+                    pbuf_ik(I, K) = array(K, J)
+                enddo
+            enddo
+
+            ! Nullify the field to prevent dangling stuff
+            nullify(pbuf_ik)
+        enddo
+    end subroutine HCO_Export_Pbuf_CAM3D
 !EOC
 end module hco_cam_exports
