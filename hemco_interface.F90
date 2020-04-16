@@ -51,6 +51,7 @@ module hemco_interface
 
     ! HEMCO types
     use HCO_Error_Mod,            only: hp          ! HEMCO precision
+    use HCO_Error_Mod,            only: sp          ! HEMCO single precision used for Ptrs
     use HCO_Error_Mod,            only: HCO_SUCCESS, HCO_FAIL, HCO_VERSION
     use HCO_State_Mod,            only: HCO_State
     use HCOX_State_Mod,           only: Ext_State   ! Note: Extensions unsupported
@@ -112,6 +113,9 @@ module hemco_interface
     ! Last execution times for the HEMCO component. We are assuming that time
     ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
     integer                          :: last_HCO_day, last_HCO_second
+
+    ! Are we exporting CHEM_INPUTS to CESM2-GC?
+    logical                          :: HCO_CESM2GCInputs
 
     ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
     ! We have to store the fields because the regridding can only take place within the GridComp.
@@ -237,6 +241,7 @@ contains
         use HCO_LogFile_Mod,  only: HCO_Spec2Log
         use HCO_State_Mod,    only: HcoState_Init
         use HCO_Types_Mod,    only: ConfigObj
+        use HCO_Types_Mod,    only: ListCont
         use HCO_VertGrid_Mod, only: HCO_VertGrid_Define
 
         ! HEMCO extensions are unsupported for now.
@@ -277,11 +282,17 @@ contains
 
         ! Temporary string for species naming in exports
         character(len=128)           :: exportName, exportDesc
+        character(len=128)           :: exportNameTmp
 
         ! Timing properties
         integer                      :: year, month, day, tod
         integer                      :: hour, minute, second, dt
         integer                      :: prev_day, prev_s, now_day, now_s
+
+        ! HEMCO types
+        type(ListCont), pointer      :: TmpLct
+
+        !-----------------------------------------------------------------------
 
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -493,10 +504,10 @@ contains
         if(masterproc) write(iulog,*) "> Initialize HEMCO state obj OK!"
 
         ! Emissions, chemistry and dynamics timestep [s]
-        ! Assume 1h until given actual time in HCO_GC_Run!
-        HcoState%TS_EMIS = 3600.0
-        HcoState%TS_CHEM = 3600.0
-        HcoState%TS_DYN  = 3600.0
+        ! Assume 0.5h until given actual time in HCO_GC_Run!
+        HcoState%TS_EMIS = 1800.0
+        HcoState%TS_CHEM = 1800.0
+        HcoState%TS_DYN  = 1800.0
 
         ! Not a MAPL simulation. isESMF is deceiving.
         HcoState%Options%isESMF = .false.
@@ -625,6 +636,67 @@ contains
 
         if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
 
+        !-----------------------------------------------------------------------
+        ! Additional exports: Verify if we need to add additional exports
+        ! for integration with CESM-GC. (hplin, 4/15/20)
+        !-----------------------------------------------------------------------
+        TmpLct => HcoState%ReadLists%Once
+        ! Kludge: If LANDTYPE00 is available in one-time list, all exports for CAM
+        ! will be initialized in the pbuf
+        HCO_CESM2GCInputs = .false.
+        do while(associated(TmpLct))
+            if(associated(TmpLct%Dct)) then
+                if(trim(TmpLct%Dct%cName) .eq. 'LANDTYPE00') then
+                    HCO_CESM2GCInputs = .true.
+                    exit
+                endif
+                TmpLct => TmpLct%NextCont
+            endif
+        enddo
+        TmpLct => NULL()
+
+        ! Do additional exports!
+        if(HCO_CESM2GCInputs) then
+            do N = 0, 72
+                ! LANDTYPExx
+                write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
+                exportName = 'HCO_' // trim(exportNameTmp)
+                exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+                ! Too lazy to write an Export_CAM2D
+                call addfld(exportName, (/'lev'/), 'I', '1',                &
+                            trim(exportDesc),                               &
+                            gridname='physgrid')
+                call add_default(exportName, 2, 'I') ! On by default
+
+                ! Also pbuf
+                call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+                
+                if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+
+                ! XLAIxx
+                write(exportNameTmp, '(a,i2.2)') 'XLAI', N
+                exportName = 'HCO_' // trim(exportNameTmp)
+                exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+                ! Too lazy to write an Export_CAM2D
+                call addfld(exportName, (/'lev'/), 'I', '1',                &
+                            trim(exportDesc),                               &
+                            gridname='physgrid')
+                call add_default(exportName, 2, 'I') ! On by default
+
+                ! Also pbuf
+                call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+                
+                if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            enddo
+
+            if(masterproc) then
+                write(iulog,*) "> HEMCO additional exports for CESM2-GC initialized!"
+            endif
+        endif
     end subroutine HCOI_Chunk_Init
 !EOC
 !------------------------------------------------------------------------------
@@ -887,6 +959,7 @@ contains
         use HCO_Clock_Mod,          only: HcoClock_EmissionsDone
         use HCO_Diagn_Mod,          only: HcoDiagn_AutoUpdate
         use HCO_Driver_Mod,         only: HCO_Run
+        use HCO_EmisList_Mod,       only: Hco_GetPtr
         use HCO_FluxArr_Mod,        only: HCO_FluxArrReset
         use HCO_GeoTools_Mod,       only: HCO_CalcVertGrid, HCO_SetPBLm
 
@@ -921,8 +994,14 @@ contains
         ! Temporaries for exports
         real(ESMF_KIND_R8)                    :: TMP
         logical                               :: FND
-        character(len=128)                    :: exportName
-        integer                               :: spcID
+        character(len=128)                    :: exportName, exportNameTmp
+        integer                               :: spcID, N
+
+        ! For grabbing data from HEMCO Ptrs (uses HEMCO single-precision)
+        real(sp), pointer                     :: Ptr2D(:,:)
+        real(sp), pointer                     :: Ptr3D(:,:,:)
+
+        ! Temporaries used for export
         real(ESMF_KIND_R8)                    :: exportFldHco(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: exportFldCAM(1:LM, 1:my_CE)
 
@@ -932,10 +1011,10 @@ contains
         real(ESMF_KIND_R8)                    :: dummy_1_CAM(1:LM, 1:my_CE)
 
         ! Timing properties
-        integer                      :: year, month, day, tod
-        integer                      :: hour, minute, second
-        integer                      :: prev_day, prev_s, now_day, now_s
-        integer                      :: tmp_currTOD
+        integer                               :: year, month, day, tod
+        integer                               :: hour, minute, second
+        integer                               :: prev_day, prev_s, now_day, now_s
+        integer                               :: tmp_currTOD
 
         ! HEMCO vertical grid property pointers
         ! NOTE: Hco_CalcVertGrid expects pointer-based arguments, so we must
@@ -1004,12 +1083,12 @@ contains
         tmp_currTOD = tod
         hour = 0
         minute = 0
-        do while(tmp_currTOD > 3600)
+        do while(tmp_currTOD >= 3600)
             tmp_currTOD = tmp_currTOD - 3600
             hour = hour + 1
         enddo
 
-        do while(tmp_currTOD > 60)
+        do while(tmp_currTOD >= 60)
             tmp_currTOD = tmp_currTOD - 60
             minute = minute + 1
         enddo
@@ -1195,6 +1274,62 @@ contains
             ! Write to physics buffer (pass model name)
             call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
         enddo
+
+        ! Do we need to do additional exports for CESM-GC?
+        if(HCO_CESM2GCInputs) then
+            do N = 0, 72
+                ! Assume success
+                HMRC = HCO_SUCCESS
+
+                ! LANDTYPExx
+                write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
+                exportName = 'HCO_' // trim(exportNameTmp)
+
+                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+                ! Too lazy to write an Export_CAM2D
+                exportFldHco(:,:,:) = 0.0_r8
+                exportFldCAM(:,:)   = 0.0_r8
+
+                do J = my_JS, my_JE
+                    HJ = J - my_JS + 1
+                do I = my_IS, my_IE
+                    HI = I - my_IS + 1
+
+                    ! Grab the pointer if available
+                    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                    if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                enddo
+                enddo
+
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+
+                ! XLAIxx
+                write(exportNameTmp, '(a,i2.2)') 'XLAI', N
+                exportName = 'HCO_' // trim(exportNameTmp)
+
+                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+                ! Too lazy to write an Export_CAM2D
+                exportFldHco(:,:,:) = 0.0_r8
+                exportFldCAM(:,:)   = 0.0_r8
+
+                do J = my_JS, my_JE
+                    HJ = J - my_JS + 1
+                do I = my_IS, my_IE
+                    HI = I - my_IS + 1
+
+                    ! Grab the pointer if available
+                    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                    if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                enddo
+                enddo
+
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            enddo
+        endif
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
         dummy_1(:,:,:) = iam * 1.0_r8

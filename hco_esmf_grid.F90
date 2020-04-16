@@ -112,6 +112,7 @@ module hco_esmf_grid
 ! !REVISION HISTORY:
 !  11 Feb 2020 - H.P. Lin    - First crack.
 !  17 Feb 2020 - H.P. Lin    - Start of work on regrid routines.
+!  15 Apr 2020 - H.P. Lin    - Regrid routines mostly finalized
 !EOP
 !------------------------------------------------------------------------------
 !BOC
