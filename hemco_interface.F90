@@ -38,6 +38,12 @@ module hemco_interface
     use mo_tracname,              only: solsym      ! species names
     use mo_chem_utls,             only: get_spc_ndx ! IND_
 
+    ! Species information (CESM-GC) (temporary kludge)
+#if defined( EXTERNAL_FORCING )
+    use chem_mods,                only: nTracers, tracerNames
+    use chem_mods,                only: MWRatio
+#endif
+
     ! Grid
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
@@ -427,10 +433,18 @@ contains
         !-----------------------------------------------------------------------
         if(masterproc) write(iulog,*) "> Initializing HCO configuration object"
 
+        ! Very ugly hack to recognize CESM-GC: Change TBD
+#if !defined( EXTERNAL_FORCING )
         ! We are using gas_pcnst here, which is # of "gas phase" species.
         ! This might be changed down the line but we are reading chem_mods
         ! for now.
-        call ConfigInit(HcoConfig, HMRC, nModelSpecies=gas_pcnst)
+        nHcoSpc             = gas_pcnst          ! # of hco species? using gas
+#else
+        ! Working with CESM-GC: use nTracers. To coordinate with tmmf
+        nHcoSpc             = nTracers
+#endif
+
+        call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         HcoConfig%amIRoot   = masterproc
@@ -441,8 +455,6 @@ contains
         !-----------------------------------------------------------------------
         ! Retrieve the species list and register exports
         !-----------------------------------------------------------------------
-        nHcoSpc             = gas_pcnst          ! # of hco species? using gas
-
         ! Below we directly use nHcoSpc for now... it may be wrong in the future though
         ! (hplin, 3/29/20)
         HcoConfig%nModelSpc = nHcoSpc
@@ -452,7 +464,13 @@ contains
 
         do N = 1, nHcoSpc
             HcoConfig%ModelSpc(N)%ModID   = N ! model id
+
+            ! Ugly kludge to recognize CESM-GC (using EXTERNAL_FORCING) (hplin, 5/16/20)
+#if !defined( EXTERNAL_FORCING )
             HcoConfig%ModelSpc(N)%SpcName = trim(solsym(N))
+#else
+            HcoConfig%ModelSpc(N)%SpcName = trim(tracerNames(N))
+#endif
 
             !----------------------------------------------
             ! Register export properties.
@@ -461,8 +479,8 @@ contains
 
             ! TODO (hplin): Writes to tape 2 by default, add namelist option to force it
             ! to go in a different tape? Or abide to CAM conventions...
-            exportName = 'HCO_' // trim(solsym(N))
-            exportDesc = "HEMCO 3-D Emissions Species " // trim(solsym(N))
+            exportName = 'HCO_' // trim(HcoConfig%ModelSpc(N)%SpcName)
+            exportDesc = "HEMCO 3-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
             call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
                         trim(exportDesc),                               &
                         gridname='physgrid')
@@ -528,9 +546,27 @@ contains
         !-----------------------------------------------------------------------
         do N = 1, nHcoSpc
             HcoState%Spc(N)%ModID         = N               ! model id
+
+            ! Ugly kludge to recognize CESM-GC (using EXTERNAL_FORCING) (hplin, 5/16/20)
+#if !defined( EXTERNAL_FORCING )
             HcoState%Spc(N)%SpcName       = trim(solsym(N)) ! species name
 
             HcoState%Spc(N)%MW_g          = adv_mass(N)     ! mol. weight [g/mol]
+
+            ! Emitted molecules per molecules of species [1]
+            ! Most spc. 1.0, for the species in the list above, will be # of moles carbon
+            ! per mole species.
+
+            ! FIXME: To resolve special case
+            HcoState%Spc(N)%MolecRatio    = 1.0_hp
+#else
+            ! CESM-GC has all necessary data, maybe,
+            ! FIXME: to coordinate EmMW_g with TMMF (hplin, 5/16/20)
+            HcoState%Spc(N)%SpcName       = trim(tracerNames(N)) ! species name
+
+            HcoState%Spc(N)%MW_g          = adv_Mass(N)     ! mol. weight [g/mol]
+            HcoState%Spc(N)%MolecRatio    = MWRatio(N)      ! Emitted mol per mol of spc [1]
+#endif
 
             ! WARNING: This is the EMITTED molecular weight of species.
             ! Some hydrocarbons (e.g. ISOP) are emitted as equiv. no. of C atoms
@@ -562,13 +598,6 @@ contains
             else
                 HcoState%Spc(N)%EmMW_g    = adv_mass(N)     ! emitted mol. weight [g/mol]
             endif
-
-            ! Emitted molecules per molecules of species [1]
-            ! Most spc. 1.0, for the species in the list above, will be # of moles carbon
-            ! per mole species.
-
-            ! FIXME: To resolve special case
-            HcoState%Spc(N)%MolecRatio    = 1.0_hp
 
             ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
             ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
