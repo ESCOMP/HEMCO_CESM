@@ -643,12 +643,12 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         ! Point to grid variables
-        HcoState%Grid%XMID%Val         => XMid   (my_IS:my_IE, my_JS:my_JE)
-        HcoState%Grid%YMID%Val         => YMid   (my_IS:my_IE, my_JS:my_JE)
-        HcoState%Grid%XEdge%Val        => XEdge  (my_IS:my_IE, my_JS:my_JE)
-        HcoState%Grid%YEdge%Val        => YEdge  (my_IS:my_IE, my_JS:my_JE)
-        HcoState%Grid%YSin%Val         => YSin   (my_IS:my_IE, my_JS:my_JE)
-        HcoState%Grid%AREA_M2%Val      => AREA_M2(my_IS:my_IE, my_JS:my_JE)
+        HcoState%Grid%XMID%Val         => XMid   (my_IS:my_IE  , my_JS:my_JE  )
+        HcoState%Grid%YMID%Val         => YMid   (my_IS:my_IE  , my_JS:my_JE  )
+        HcoState%Grid%XEdge%Val        => XEdge  (my_IS:my_IE+1, my_JS:my_JE  )
+        HcoState%Grid%YEdge%Val        => YEdge  (my_IS:my_IE  , my_JS:my_JE+1)
+        HcoState%Grid%YSin%Val         => YSin   (my_IS:my_IE  , my_JS:my_JE+1)
+        HcoState%Grid%AREA_M2%Val      => AREA_M2(my_IS:my_IE  , my_JS:my_JE  )
 
         ! Debug
         ! write(6,*) "HCOI_Chunk_Init XMid, YMid(1,1)", HcoState%Grid%XMid%Val(1,1), &
@@ -1200,7 +1200,7 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         ! Pass boundary layer height to HEMCO (PBLm = PBL mixing height) [m]
-        call HCO_SetPBLm(HcoState, FldName='PBL_HEIGHT', PBLM=State_HCO_PBLH, &
+        call HCO_SetPBLm(HcoState, PBLM=State_HCO_PBLH, &
                          DefVal=1000.0_hp, & ! default value
                          RC=HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -1232,11 +1232,33 @@ contains
         ! FIXME: hplin - setting false as last timestep of simulation. maybe see
         ! if we can figure out from CAM if we are at run end and set to true
         call HCO_Run( HcoState, 1, HMRC, IsEndStep=.false. )
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1 has failed!    "
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
+            write(iulog,*) "A critical component in HEMCO failed to run."
+            write(iulog,*) "This may be due to misconfiguration, or a bug."
+            write(iulog,*) "Please refer to the HEMCO.log log file in your"
+            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
 
         call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2 has failed!    "
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
+            write(iulog,*) "A critical component in HEMCO failed to run."
+            write(iulog,*) "This may be due to misconfiguration, or a bug."
+            write(iulog,*) "Please refer to the HEMCO.log log file in your"
+            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"

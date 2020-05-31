@@ -316,6 +316,9 @@ contains
         ! G-C def: Pedge(I,J,L) = Ap(L) + [ Bp(L) * Psurface(I,J) ]
         ! CAM def: Pifce(    L) = hyai(k)*ps0 + [ hybi(k) * ps ]
         !   w.r.t. ps0 = base state srfc prs; ps = ref srfc prs.
+        !
+        ! Note that the vertical has to be flipped and this will need to be done
+        ! everywhere else within HEMCO_CESM, too.
         do L = 1, (LM+1)
             Ap(L) = hyai(LM+2-L) * ps0
             Bp(L) = hybi(LM+2-L)
@@ -410,15 +413,19 @@ contains
             write( iulog, '(''%%%%%%%%%%%%%%% HEMCO GRID %%%%%%%%%%%%%%%'')' )
             write( iulog, '(a)' )
             write( iulog, '(''Grid box longitude centers [degrees]: '')' )
+            write( iulog, * ) size(XMid, 1), size(XMid, 2)
             write( iulog, '(8(f8.3,1x))' ) ( XMid(I,1), I=1,IM )
             write( iulog, '(a)' )
             write( iulog, '(''Grid box longitude edges [degrees]: '')' )
+            write( iulog, * ) size(XEdge, 1), size(XEdge, 2)
             write( iulog, '(8(f8.3,1x))' ) ( XEdge(I,1), I=1,IM+1 )
             write( iulog, '(a)' )
             write( iulog, '(''Grid box latitude centers [degrees]: '')' )
+            write( iulog, * ) size(YMid, 1), size(YMid, 2)
             write( iulog, '(8(f8.3,1x))' ) ( YMid(1,J), J=1,JM )
             write( iulog, '(a)' )
             write( iulog, '(''Grid box latitude edges [degrees]: '')' )
+            write( iulog, * ) size(YEdge, 1), size(YEdge, 2)
             write( iulog, '(8(f8.3,1x))' ) ( YEdge(1,J), J=1,JM+1 )
             write( iulog, '(a)' )
             write( iulog, '(''SIN( grid box latitude edges )'')' )
@@ -1168,12 +1175,12 @@ contains
         enddo
 
         ! Exclude periodic points for source grids
-        do n = 0, nPET-1
-            if (HCO_Tasks(n)%ID_I == nPET_lon-1) then ! Eastern edge
-                nlons_task(HCO_Tasks(n)%ID_I + 1) = HCO_Tasks(n)%IM - 1
-                ! overwrites %IM above...
-            endif
-        enddo
+        ! do n = 0, nPET-1
+        !     if (HCO_Tasks(n)%ID_I == nPET_lon-1) then ! Eastern edge
+        !         nlons_task(HCO_Tasks(n)%ID_I + 1) = HCO_Tasks(n)%IM - 1
+        !         ! overwrites %IM above...
+        !     endif
+        ! enddo
 
         do j = 1, nPET_lat
             loop1: do n = 0, nPET-1
@@ -1231,8 +1238,7 @@ contains
         !      my_IM, my_JM, size(coordX, 1), size(coordX, 2)
         ! Off by one in periodic dim'n, don't assert I dim here
         ! ASSERT_((ubnd(1) - lbnd(1))==(my_IE-my_IS))
-        ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
-
+        ! ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
 
         call ESMF_GridGetCoord(HCO_Grid, coordDim=2, localDE=0,        &
                                computationalLBound=lbnd,               &
@@ -1246,7 +1252,7 @@ contains
         !              "IM, JM, sizeY1,2 = ", & 
         !      my_IM, my_JM, size(coordY, 1), size(coordY, 2)
         ! ASSERT_((ubnd(1) - lbnd(1))==(my_IE-my_IS))
-        ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
+        ! ASSERT_((ubnd(2) - lbnd(2))==(my_JE-my_JS))
 
         do j = lbnd(2), ubnd(2)
             do i = lbnd(1), ubnd(1)
@@ -1274,13 +1280,21 @@ contains
                                staggerloc=ESMF_STAGGERLOC_CORNER,      &
                                rc=RC)
 
+        ! lbnd(1), ubnd(1) -> 1, 180; 181, 360 ... same as IS, IE ...
+
+
         ! Note: Compute bounds are not starting from 1 almost surely
         ! and they should be on the same decomp as the global elems.
         ! So they should be read through the global indices
         ! and not offset ones (a la WRF) (hplin, 2/21/20)
+
+        ! It is a rectilinear grid - so it will not matter what j you pick
+        ! for the x-dimension edges, and vice-versa. This is a crude assumption
+        ! that is correct for rectilinear but should be revisited. The code
+        ! itself is capable of much more. (hplin, 5/29/20)
         do j = lbnd(2), ubnd(2)
             do i = lbnd(1), ubnd(1)
-                coordX_E(i, j) = XEdge(i, j)
+                coordX_E(i, j) = XEdge(i, min(JM, j))
             enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
@@ -1294,7 +1308,7 @@ contains
 
         do j = lbnd(2), ubnd(2)
             do i = lbnd(1), ubnd(1)
-                coordY_E(i, j) = YEdge(i, j)
+                coordY_E(i, j) = YEdge(min(IM, i), j)
             enddo
         enddo
         ASSERT_(RC==ESMF_SUCCESS)
@@ -1522,9 +1536,13 @@ contains
 !  start at 1 always.
 !  (2) The subroutine's inner workings abstract ESMF from the user, but this routine
 !  needs to be called from within the gridded component (as suggested by Steve)
+!  (3) Note that this automatically flips the vertical through HCO_ESMF_Get3DField.
+!  In CAM, layer 1 is TOA. Layer 1 is ground in HEMCO and thus we flip the vertical
+!  in regrid routines when retrieving the data.
 !
 ! !REVISION HISTORY:
 !  24 Feb 2020 - H.P. Lin    - Initial version
+!  30 May 2020 - H.P. Lin    - Remember to flip the vertical!
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1544,7 +1562,7 @@ contains
         ! (field_in, data_out, IS, IE, JS, JE)
         ! For chunks, "I" is lev, "J" is chunk index, confusing, you are warned
         ! (Physics "2D" fields on mesh are actually "3D" data)
-        call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE)
+        call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE, flip=.true.)
 
     end subroutine HCO_Grid_HCO2CAM_3D
 !EOC
@@ -1584,9 +1602,13 @@ contains
 !  start at 1 always.
 !  (2) The subroutine's inner workings abstract ESMF from the user, but this routine
 !  needs to be called from within the gridded component (as suggested by Steve)
+!  (3) Note that this automatically flips the vertical through HCO_ESMF_Get3DField.
+!  In CAM, layer 1 is TOA. Layer 1 is ground in HEMCO and thus we flip the vertical
+!  in regrid routines when retrieving the data.
 !
 ! !REVISION HISTORY:
 !  24 Feb 2020 - H.P. Lin    - Initial version
+!  30 May 2020 - H.P. Lin    - Remember to flip the vertical!
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1606,24 +1628,7 @@ contains
                               checkflag=.true., rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        call HCO_ESMF_Get3DField(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
-
-        ! Kludge for periodic point
-        ! It seems like the last point for the PET in the x-edge direction is messed up,
-        ! because it is the "periodic" point wrapping around the globe. This part is
-        ! not smooth and needs to be manually extrapolated.
-        !
-        ! This is a kludge as we want to revisit the regrid mechanism later.
-        ! For now fix it by copying the edge, not IDAVG
-        if(my_IE .eq. IM) then
-            do K = 1, LM
-            do J = my_JS, my_JE
-                if(hcoArray(my_IE, J, K) .le. 0.000001_r8) then
-                    hcoArray(my_IE, J, K) = hcoArray(my_IE-1, J, K)
-                endif
-            enddo
-            enddo
-        endif
+        call HCO_ESMF_Get3DField(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM, flip=.true.)
 
     end subroutine HCO_Grid_CAM2HCO_3D
 !EOC
@@ -1972,7 +1977,7 @@ contains
         integer                     :: lbnd(2), ubnd(2)
         real(r8), pointer           :: fptr(:,:)
 
-        call ESMF_LogWrite("In HCO_ESMF_Set3DCAM before ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
+        ! call ESMF_LogWrite("In HCO_ESMF_Set3DCAM before ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
 
         call ESMF_FieldGet(field, localDE=0, farrayPtr=fptr,             &
                            computationalLBound=lbnd,                     &
@@ -1980,7 +1985,7 @@ contains
         ASSERT_(RC==ESMF_SUCCESS)
 
 
-        call ESMF_LogWrite("In HCO_ESMF_Set3DCAM after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
+        ! call ESMF_LogWrite("In HCO_ESMF_Set3DCAM after ESMF_FieldGet", ESMF_LOGMSG_INFO, rc=RC)
         fptr(:,:) = 0.0_r8                                    ! Arbitrary missval
         do I = lbnd(2), ubnd(2)
             do K = lbnd(1), ubnd(1)
@@ -2049,7 +2054,7 @@ contains
 !\\
 ! !INTERFACE:
 !
-    subroutine HCO_ESMF_Get2DField(field_in, data_out, IS, IE, JS, JE)
+    subroutine HCO_ESMF_Get2DField(field_in, data_out, IS, IE, JS, JE, flip)
 !
 ! !USES:
 !
@@ -2060,13 +2065,21 @@ contains
         type(ESMF_Field), intent(in)           :: field_in
         integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
         integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
+        logical, optional, intent(in)          :: flip        ! Flip the FIRST dimension?
 !
 ! !OUTPUT PARAMETERS:
 !
         real(r8), intent(out)                  :: data_out(IS:IE, JS:JE)
 !
+! !REMARKS:
+!  If the flip argument is set to .true., then the FIRST dimension (IS:IE) will be flipped.
+!  This is used when retrieving a CAM field regridded from HEMCO, when you have to flip
+!  the vertical to fit correctly. The dimensions of a CAM 3d data is a 2d chunked array
+!  with indices (k, i) so... the first dimension has to be flipped instead.
+!
 ! !REVISION HISTORY:
 !  23 Feb 2020 - H.P. Lin    - Initial version
+!  30 May 2020 - H.P. Lin    - Add flip parameter
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -2076,10 +2089,20 @@ contains
         character(len=*), parameter :: subname = 'HCO_ESMF_Get2DField'
         real(r8), pointer           :: fptr(:,:)
         integer                     :: RC
+        logical                     :: flip1d = .false.
+
+        if(present(flip)) then
+            flip1d = flip
+        endif
 
         call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
-        data_out(:,:) = fptr(:,:)
+
+        if(flip1d) then
+            data_out(IS:IE:1, :) = fptr(IE:IS:-1, :)
+        else
+            data_out(:,:) = fptr(:,:)
+        endif
 
     end subroutine HCO_ESMF_Get2DField
 !EOC
@@ -2096,7 +2119,7 @@ contains
 !\\
 ! !INTERFACE:
 !
-    subroutine HCO_ESMF_Get3DField(field_in, data_out, IS, IE, JS, JE, KS, KE)
+    subroutine HCO_ESMF_Get3DField(field_in, data_out, IS, IE, JS, JE, KS, KE, flip)
 !
 ! !USES:
 !
@@ -2108,13 +2131,20 @@ contains
         integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
         integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
         integer, intent(in)                    :: KS, KE      ! Start and end indices (dim3)
+        logical, optional, intent(in)          :: flip        ! Flip the 3rd dimension?
 !
 ! !OUTPUT PARAMETERS:
 !
         real(r8), intent(out)                  :: data_out(IS:IE, JS:JE, KS:KE)
 !
+! !REMARKS:
+!  If the flip argument is set to .true., then the third dimension (KS:KE) will be flipped.
+!  This is used when retrieving a HEMCO field regridded from CAM, when you have to flip
+!  the vertical to fit correctly.
+!
 ! !REVISION HISTORY:
 !  23 Feb 2020 - H.P. Lin    - Initial version
+!  30 May 2020 - H.P. Lin    - Add flip parameter
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -2124,10 +2154,20 @@ contains
         character(len=*), parameter :: subname = 'HCO_ESMF_Get3DField'
         real(r8), pointer           :: fptr(:,:,:)
         integer                     :: RC
+        logical                     :: flip3d = .false.
+
+        if(present(flip)) then
+            flip3d = flip
+        endif
 
         call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
-        data_out(:,:,:) = fptr(:,:,:)
+
+        if(flip3d) then
+            data_out(:,:,KS:KE:1) = fptr(:,:,KE:KS:-1)
+        else
+            data_out(:,:,:) = fptr(:,:,:)
+        endif
 
     end subroutine HCO_ESMF_Get3DField
 !EOC
