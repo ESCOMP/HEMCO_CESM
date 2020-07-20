@@ -489,7 +489,8 @@ contains
             if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! Physics buffer
-            call HCO_Export_Pbuf_AddField(exportName, 3, hcoID=N)
+            ! Note that _AddField will prepend HCO_, so do not add it here
+            call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 3, hcoID=N)
         enddo
 
         !-----------------------------------------------------------------------

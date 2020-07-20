@@ -494,6 +494,7 @@ contains
 
         integer                      :: lchnk, ncol
         integer                      :: I, K, J
+        integer                      :: RC
         type(physics_buffer_desc), pointer :: pbuf_chnk(:)       ! slice of pbuf in chnk
         real(r8), pointer            :: pbuf_ik(:,:)     ! Pointer to pbuf data (/pcols,pver/)
 
@@ -513,7 +514,7 @@ contains
             endif
             tmpIdx = pbuf_idx_map(spcID)
         else
-            tmpIdx = pbuf_get_index(fldname_ns)
+            tmpIdx = pbuf_get_index(fldname_ns, RC)
             if(tmpIdx < 0) then
                 if(masterproc) write(iulog,*) "HCO_Export_Pbuf_CAM3D: Field not found", spcID, fldname_ns
                 return
