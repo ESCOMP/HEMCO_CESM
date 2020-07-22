@@ -201,6 +201,9 @@ contains
             write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
         endif
 
+        ! MPI Broadcast Namelist variables
+        call mpi_bcast(hemco_config_file, len(hemco_config_file), mpi_character, masterprocid, mpicom, ierr)
+
         ! Save this to the module information
         HcoConfigFile = hemco_config_file
     end subroutine hemco_readnl
@@ -484,7 +487,7 @@ contains
             call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
                         trim(exportDesc),                               &
                         gridname='physgrid')
-            call add_default(exportName, 2, 'I') ! On by default
+            ! call add_default(exportName, 2, 'I') ! On by default
 
             if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -698,7 +701,7 @@ contains
                 call addfld(exportName, (/'lev'/), 'I', '1',                &
                             trim(exportDesc),                               &
                             gridname='physgrid')
-                call add_default(exportName, 2, 'I') ! On by default
+                ! call add_default(exportName, 2, 'I') ! On by default
 
                 ! Also pbuf
                 call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
@@ -715,7 +718,7 @@ contains
                 call addfld(exportName, (/'lev'/), 'I', '1',                &
                             trim(exportDesc),                               &
                             gridname='physgrid')
-                call add_default(exportName, 2, 'I') ! On by default
+                ! call add_default(exportName, 2, 'I') ! On by default
 
                 ! Also pbuf
                 call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
