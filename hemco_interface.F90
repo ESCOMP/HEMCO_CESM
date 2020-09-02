@@ -726,6 +726,23 @@ contains
                 if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
             enddo
 
+            ! UVALBEDO
+            write(exportnametmp, '(a)') 'uvalbedo'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            call addfld(exportName, (/'lev'/), 'I', 'nM',               &
+                        trim(exportDesc),                               &
+                        gridname='physgrid')
+            ! call add_default(exportName, 2, 'I') ! On by default
+
+            ! Also pbuf
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+
+            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+
             ! SURF_IODIDE
             write(exportnametmp, '(a)') 'iodide'
             exportName = 'HCO_' // trim(exportNameTmp)
@@ -1418,6 +1435,33 @@ contains
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             enddo
+
+            ! UVALBEDO
+            write(exportNameTmp, '(a)') 'uvalbedo'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            exportFldHco(:,:,:) = 0.0_r8
+            exportFldCAM(:,:)   = 0.0_r8
+
+            do J = my_JS, my_JE
+                HJ = J - my_JS + 1
+            do I = my_IS, my_IE
+                HI = I - my_IS + 1
+
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            enddo
+            enddo
+
+            write(exportNameTmp, '(a)') 'uvalbedo'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
 
             ! SURF_SALINITY
             write(exportNameTmp, '(a)') 'surf_salinity'
