@@ -727,13 +727,13 @@ contains
             enddo
 
             ! UVALBEDO
-            write(exportnametmp, '(a)') 'uvalbedo'
+            write(exportnameTmp, '(a)') 'UV_ALBEDO'
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
             ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
             ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'nM',               &
+            call addfld(exportName, (/'lev'/), 'I', '1',                &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
@@ -744,7 +744,7 @@ contains
             if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! SURF_IODIDE
-            write(exportnametmp, '(a)') 'iodide'
+            write(exportnameTmp, '(a)') 'iodide'
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
@@ -761,7 +761,7 @@ contains
             if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! SURF_SALINITY
-            write(exportnametmp, '(a)') 'salinity'
+            write(exportnameTmp, '(a)') 'salinity'
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
@@ -1437,7 +1437,7 @@ contains
             enddo
 
             ! UVALBEDO
-            write(exportNameTmp, '(a)') 'uvalbedo'
+            write(exportNameTmp, '(a)') 'UV_ALBEDO'
             exportName = 'HCO_' // trim(exportNameTmp)
 
             ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
@@ -1455,9 +1455,6 @@ contains
                 if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
             enddo
             enddo
-
-            write(exportNameTmp, '(a)') 'uvalbedo'
-            exportName = 'HCO_' // trim(exportNameTmp)
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
