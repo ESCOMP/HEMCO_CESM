@@ -722,9 +722,60 @@ contains
 
                 ! Also pbuf
                 call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
-                
+
                 if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
             enddo
+
+            ! UVALBEDO
+            write(exportnameTmp, '(a)') 'UV_ALBEDO'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            call addfld(exportName, (/'lev'/), 'I', '1',                &
+                        trim(exportDesc),                               &
+                        gridname='physgrid')
+            ! call add_default(exportName, 2, 'I') ! On by default
+
+            ! Also pbuf
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+
+            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+
+            ! SURF_IODIDE
+            write(exportnameTmp, '(a)') 'iodide'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            call addfld(exportName, (/'lev'/), 'I', 'nM',               &
+                        trim(exportDesc),                               &
+                        gridname='physgrid')
+            ! call add_default(exportName, 2, 'I') ! On by default
+
+            ! Also pbuf
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+
+            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+
+            ! SURF_SALINITY
+            write(exportnameTmp, '(a)') 'salinity'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+                        trim(exportDesc),                               &
+                        gridname='physgrid')
+            ! call add_default(exportName, 2, 'I') ! On by default
+
+            ! Also pbuf
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+
+            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             if(masterproc) then
                 write(iulog,*) "> HEMCO additional exports for CESM2-GC initialized!"
@@ -1384,6 +1435,89 @@ contains
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             enddo
+
+            ! UVALBEDO
+            write(exportNameTmp, '(a)') 'UV_ALBEDO'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            exportFldHco(:,:,:) = 0.0_r8
+            exportFldCAM(:,:)   = 0.0_r8
+
+            do J = my_JS, my_JE
+                HJ = J - my_JS + 1
+            do I = my_IS, my_IE
+                HI = I - my_IS + 1
+
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            enddo
+            enddo
+
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+
+            ! SURF_SALINITY
+            write(exportNameTmp, '(a)') 'surf_salinity'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            exportFldHco(:,:,:) = 0.0_r8
+            exportFldCAM(:,:)   = 0.0_r8
+
+            do J = my_JS, my_JE
+                HJ = J - my_JS + 1
+            do I = my_IS, my_IE
+                HI = I - my_IS + 1
+
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            enddo
+            enddo
+
+            ! This is required as the physics buffer cannot store
+            ! `HCO_surf_salinity` as it is too long.. We thus export as
+            ! `HCO_salinity`
+            write(exportNameTmp, '(a)') 'salinity'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+
+            ! SURF_IODIDE
+            write(exportNameTmp, '(a)') 'surf_iodide'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
+            ! Too lazy to write an Export_CAM2D
+            exportFldHco(:,:,:) = 0.0_r8
+            exportFldCAM(:,:)   = 0.0_r8
+
+            do J = my_JS, my_JE
+                HJ = J - my_JS + 1
+            do I = my_IS, my_IE
+                HI = I - my_IS + 1
+
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            enddo
+            enddo
+
+            ! See above comment about `HCO_surf_salinity`
+            write(exportNameTmp, '(a)') 'iodide'
+            exportName = 'HCO_' // trim(exportNameTmp)
+
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+
         endif
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
