@@ -1396,16 +1396,9 @@ contains
                 exportFldHco(:,:,:) = 0.0_r8
                 exportFldCAM(:,:)   = 0.0_r8
 
-                do J = my_JS, my_JE
-                    HJ = J - my_JS + 1
-                do I = my_IS, my_IE
-                    HI = I - my_IS + 1
-
-                    ! Grab the pointer if available
-                    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                    if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-                enddo
-                enddo
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
                 call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1420,16 +1413,9 @@ contains
                 exportFldHco(:,:,:) = 0.0_r8
                 exportFldCAM(:,:)   = 0.0_r8
 
-                do J = my_JS, my_JE
-                    HJ = J - my_JS + 1
-                do I = my_IS, my_IE
-                    HI = I - my_IS + 1
-
-                    ! Grab the pointer if available
-                    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                    if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-                enddo
-                enddo
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
                 call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1445,16 +1431,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1469,16 +1448,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             ! This is required as the physics buffer cannot store
             ! `HCO_surf_salinity` as it is too long.. We thus export as
@@ -1499,16 +1471,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             ! See above comment about `HCO_surf_salinity`
             write(exportNameTmp, '(a)') 'iodide'
