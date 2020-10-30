@@ -34,7 +34,7 @@ contains
     ! Note that the VERIFY and ASSERT functions here are inverse of MAPL and
     ! return 1 on success, 0 on failure.
     logical function HCO_ESMF_VRFY(A, subname, line, ECRC)
-        logical, intent(in)       :: A
+        integer, intent(in)       :: A
         character*(*), intent(in) :: subname
         integer, intent(in)       :: line
         integer, optional, intent(out) :: ECRC
