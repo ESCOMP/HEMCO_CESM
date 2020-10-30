@@ -99,6 +99,12 @@ module hemco_interface
 !  On a side note, this is the 8th day of living in the 2019-nCoV scare. I miss
 !  matcha tea and would die to eat some sweets.
 !
+!  It is now October 29 and COVID-19 is still raging across the globe; it feels
+!  like time has frozen itself since March 21, and we've all been "on one long Zoom call"
+!  ever since.
+!
+!  All I hope for 2021, is that the world does not pull a "You can now play as Luigi" on me.
+!
 ! !REVISION HISTORY:
 !  29 Jan 2020 - H.P. Lin    - Initial version
 !EOP
@@ -1432,7 +1438,13 @@ contains
                 ! Maybe no need to call GetHcoVal and just directly grab the pointer
                 ! instead?
                 call GetHcoVal(HcoState, ExtState, spcID, HI, HJ, HL, FND, emis=TMP)
-                if(FND) exportFldHco(I,J,K) = TMP
+                if(FND) then
+                    exportFldHco(I,J,K) = TMP
+
+                    if(masterproc .and. TMP < 0.0_r8) then
+                        write(iulog) "> **ERR** HEMCO_CAM negative value HI,HJ,HL,spcID,val", HI, HJ, HL, spcID, TMP
+                    endif
+                endif
             enddo
             enddo
             enddo
@@ -1561,19 +1573,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
-
-            write(exportNameTmp, '(a)') 'OMOC_DJF'
-            exportName = 'HCO_' // trim(exportNameTmp)
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1588,19 +1590,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
-
-            write(exportNameTmp, '(a)') 'OMOC_MAM'
-            exportName = 'HCO_' // trim(exportNameTmp)
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1615,19 +1607,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
-
-            write(exportNameTmp, '(a)') 'OMOC_JJA'
-            exportName = 'HCO_' // trim(exportNameTmp)
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1642,19 +1624,9 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
-
-                ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
-            enddo
-            enddo
-
-            write(exportNameTmp, '(a)') 'OMOC_SON'
-            exportName = 'HCO_' // trim(exportNameTmp)
+            ! Grab the pointer if available
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
+            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)

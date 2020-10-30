@@ -742,7 +742,7 @@ contains
 
         ! ESMF
         use ESMF,               only: ESMF_FieldRegridStore
-        use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE_2ND
+        use ESMF,               only: ESMF_REGRIDMETHOD_BILINEAR, ESMF_REGRIDMETHOD_CONSERVE
         use ESMF,               only: ESMF_POLEMETHOD_ALLAVG, ESMF_POLEMETHOD_NONE
         use ESMF,               only: ESMF_EXTRAPMETHOD_NEAREST_IDAVG
 
@@ -766,6 +766,8 @@ contains
 !  20 Feb 2020 - H.P. Lin    - Initial version
 !  23 Feb 2020 - H.P. Lin    - Finalized regridding handles, bilinear for CAM-HCO and
 !                              conservative (1st order) for HCO-CAM.
+!  29 Oct 2020 - H.P. Lin    - Changed to 1st-order conservative based on feedback from T. Fritz
+!                              about negative numerical artifacts coming out of ESMF.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -879,7 +881,7 @@ contains
         ! HCO -> CAM 2-D
         call ESMF_FieldRegridStore(                                &
             srcField=HCO_2DFld, dstField=CAM_2DFld,                &
-            regridMethod=ESMF_REGRIDMETHOD_CONSERVE_2ND,           &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE    ,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_2D,                    &
             !srcTermProcessing=smm_srctermproc,                     &
@@ -896,7 +898,7 @@ contains
         ! (as of ESMF 8.0.0 in ESMF_FieldRegrid.F90::993)
         call ESMF_FieldRegridStore(                                &
             srcField=HCO_3DFld, dstField=CAM_3DFld,                &
-            regridMethod=ESMF_REGRIDMETHOD_CONSERVE_2ND,           &
+            regridMethod=ESMF_REGRIDMETHOD_CONSERVE    ,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_3D,                    &
             !srcTermProcessing=smm_srctermproc,                     &
