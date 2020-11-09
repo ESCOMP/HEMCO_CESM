@@ -457,6 +457,7 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         HcoConfig%amIRoot   = masterproc
+        
         ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
@@ -562,52 +563,13 @@ contains
             HcoState%Spc(N)%SpcName       = trim(solsym(N)) ! species name
 
             HcoState%Spc(N)%MW_g          = adv_mass(N)     ! mol. weight [g/mol]
-
-            ! Emitted molecules per molecules of species [1]
-            ! Most spc. 1.0, for the species in the list above, will be # of moles carbon
-            ! per mole species.
-
-            ! FIXME: To resolve special case
-            HcoState%Spc(N)%MolecRatio    = 1.0_hp
 #else
             ! CESM-GC has all necessary data, maybe,
             ! FIXME: to coordinate EmMW_g with TMMF (hplin, 5/16/20)
             HcoState%Spc(N)%SpcName       = trim(tracerNames(N)) ! species name
 
             HcoState%Spc(N)%MW_g          = adv_Mass(N)     ! mol. weight [g/mol]
-            HcoState%Spc(N)%MolecRatio    = MWRatio(N)      ! Emitted mol per mol of spc [1]
 #endif
-
-            ! WARNING: This is the EMITTED molecular weight of species.
-            ! Some hydrocarbons (e.g. ISOP) are emitted as equiv. no. of C atoms
-            ! e.g. ISOP EmMW_g is 12.0.
-            !
-            ! Many species in GEOS-Chem behave like this, i.e.
-            ! ACET, ALD2, ALK4, BCPI, BCPO, BENZ, C2H6, C3H8, EOH, ISOP, MEK
-            ! MOPI, MOPO, NAP,  OCPI, OCPO, OPOA1, OPOA2, OPOG1, OPOG2,
-            ! POA1, POA2, POG1, POG2, PRPE, TOLU, XYLE, APMBCBIN**, APMOCBIN**
-            !
-            ! WE PREFORM A MANUAL ADJUSTMENT HERE, BECAUSE WE DO NOT KNOW ABOUT
-            ! THE PRESENCE OF GEOS-CHEM. WE PROBABLY HAVE TO REVISIT THIS IN THE
-            ! FUTURE.
-            if(trim(solsym(N)) .eq. 'ACET'  .or.  trim(solsym(N)) .eq. 'ALD2'  .or.  &
-               trim(solsym(N)) .eq. 'ALK4'  .or.  trim(solsym(N)) .eq. 'BCPI'  .or.  &
-               trim(solsym(N)) .eq. 'BCPO'  .or.  trim(solsym(N)) .eq. 'BENZ'  .or.  &
-               trim(solsym(N)) .eq. 'C2H6'  .or.  trim(solsym(N)) .eq. 'C3H8'  .or.  &
-               trim(solsym(N)) .eq. 'EOH'   .or.  trim(solsym(N)) .eq. 'ISOP'  .or.  &
-               trim(solsym(N)) .eq. 'MEK'   .or.  trim(solsym(N)) .eq. 'MOPI'  .or.  &
-               trim(solsym(N)) .eq. 'MOPO'  .or.  trim(solsym(N)) .eq. 'NAP'   .or.  &
-               trim(solsym(N)) .eq. 'OCPI'  .or.  trim(solsym(N)) .eq. 'OCPO'  .or.  &
-               trim(solsym(N)) .eq. 'OPOA1' .or.  trim(solsym(N)) .eq. 'OPOA2' .or.  &
-               trim(solsym(N)) .eq. 'OPOG1' .or.  trim(solsym(N)) .eq. 'OPOG2' .or.  &
-               trim(solsym(N)) .eq. 'POA1'  .or.  trim(solsym(N)) .eq. 'POA2'  .or.  &
-               trim(solsym(N)) .eq. 'POG1'  .or.  trim(solsym(N)) .eq. 'POG2'  .or.  &
-               trim(solsym(N)) .eq. 'PRPE'  .or.  trim(solsym(N)) .eq. 'TOLU'  .or.  &
-               trim(solsym(N)) .eq. 'XYLE') then
-                HcoState%Spc(N)%EmMW_g    = 12.0_hp
-            else
-                HcoState%Spc(N)%EmMW_g    = adv_mass(N)     ! emitted mol. weight [g/mol]
-            endif
 
             ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
             ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
@@ -618,7 +580,7 @@ contains
 
             ! Write to log too
             if(masterproc) then
-                write(iulog,*) ">> Spc", N, " = ", solsym(N), "MW_g", adv_mass(N), "EmMW_g", HcoState%Spc(N)%EmMW_g
+                write(iulog,*) ">> Spc", N, " = ", solsym(N), "MW_g", adv_mass(N)
                 call HCO_Spec2Log(HcoState, N)
             endif
         enddo
