@@ -38,12 +38,6 @@ module hemco_interface
     use mo_tracname,              only: solsym      ! species names
     use mo_chem_utls,             only: get_spc_ndx ! IND_
 
-    ! Species information (CESM-GC) (temporary kludge)
-#if defined( EXTERNAL_FORCING )
-    use chem_mods,                only: nTracers, tracerNames
-    use chem_mods,                only: MWRatio
-#endif
-
     ! Grid
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
@@ -442,16 +436,10 @@ contains
         !-----------------------------------------------------------------------
         if(masterproc) write(iulog,*) "> Initializing HCO configuration object"
 
-        ! Very ugly hack to recognize CESM-GC: Change TBD
-#if !defined( EXTERNAL_FORCING )
         ! We are using gas_pcnst here, which is # of "gas phase" species.
         ! This might be changed down the line but we are reading chem_mods
         ! for now.
         nHcoSpc             = gas_pcnst          ! # of hco species? using gas
-#else
-        ! Working with CESM-GC: use nTracers. To coordinate with tmmf
-        nHcoSpc             = nTracers
-#endif
 
         call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc)
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -475,12 +463,7 @@ contains
         do N = 1, nHcoSpc
             HcoConfig%ModelSpc(N)%ModID   = N ! model id
 
-            ! Ugly kludge to recognize CESM-GC (using EXTERNAL_FORCING) (hplin, 5/16/20)
-#if !defined( EXTERNAL_FORCING )
             HcoConfig%ModelSpc(N)%SpcName = trim(solsym(N))
-#else
-            HcoConfig%ModelSpc(N)%SpcName = trim(tracerNames(N))
-#endif
 
             !----------------------------------------------
             ! Register export properties.
@@ -557,19 +540,8 @@ contains
         !-----------------------------------------------------------------------
         do N = 1, nHcoSpc
             HcoState%Spc(N)%ModID         = N               ! model id
-
-            ! Ugly kludge to recognize CESM-GC (using EXTERNAL_FORCING) (hplin, 5/16/20)
-#if !defined( EXTERNAL_FORCING )
             HcoState%Spc(N)%SpcName       = trim(solsym(N)) ! species name
-
             HcoState%Spc(N)%MW_g          = adv_mass(N)     ! mol. weight [g/mol]
-#else
-            ! CESM-GC has all necessary data, maybe,
-            ! FIXME: to coordinate EmMW_g with TMMF (hplin, 5/16/20)
-            HcoState%Spc(N)%SpcName       = trim(tracerNames(N)) ! species name
-
-            HcoState%Spc(N)%MW_g          = adv_Mass(N)     ! mol. weight [g/mol]
-#endif
 
             ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
             ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
