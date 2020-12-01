@@ -38,6 +38,9 @@ module hemco_interface
     use mo_tracname,              only: solsym      ! species names
     use mo_chem_utls,             only: get_spc_ndx ! IND_
 
+    ! Check chemistry option
+    use chemistry,                only: chem_is
+
     ! Grid
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
@@ -119,9 +122,6 @@ module hemco_interface
     ! Last execution times for the HEMCO component. We are assuming that time
     ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
     integer                          :: last_HCO_day, last_HCO_second
-
-    ! Are we exporting CHEM_INPUTS to CESM2-GC?
-    logical                          :: HCO_CESM2GCInputs
 
     ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
     ! We have to store the fields because the regridding can only take place within the GridComp.
@@ -297,9 +297,6 @@ contains
         integer                      :: year, month, day, tod
         integer                      :: hour, minute, second, dt
         integer                      :: prev_day, prev_s, now_day, now_s
-
-        ! HEMCO types
-        type(ListCont), pointer      :: TmpLct
 
         !-----------------------------------------------------------------------
 
@@ -613,23 +610,9 @@ contains
         ! Additional exports: Verify if we need to add additional exports
         ! for integration with CESM-GC. (hplin, 4/15/20)
         !-----------------------------------------------------------------------
-        TmpLct => HcoState%ReadLists%Once
-        ! Kludge: If LANDTYPE00 is available in one-time list, all exports for CAM
-        ! will be initialized in the pbuf
-        HCO_CESM2GCInputs = .false.
-        do while(associated(TmpLct))
-            if(associated(TmpLct%Dct)) then
-                if(trim(TmpLct%Dct%cName) .eq. 'LANDTYPE00') then
-                    HCO_CESM2GCInputs = .true.
-                    exit
-                endif
-                TmpLct => TmpLct%NextCont
-            endif
-        enddo
-        TmpLct => NULL()
 
         ! Do additional exports!
-        if(HCO_CESM2GCInputs) then
+        if(chem_is('GEOS-Chem')) then
             do N = 0, 72
                 ! LANDTYPExx
                 write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
@@ -1396,8 +1379,10 @@ contains
             call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
         enddo
 
+
         ! Do we need to do additional exports for CESM-GC?
-        if(HCO_CESM2GCInputs) then
+        if(chem_is('GEOS-Chem')) then
+            if(masterproc) write(iulog,*) "HEMCO_CAM: starting exports to GEOS-Chem"
             do N = 0, 72
                 ! Assume success
                 HMRC = HCO_SUCCESS
@@ -1565,6 +1550,7 @@ contains
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             call HCO_Export_History_CAM3D(exportName, exportFldCAM)
             call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
         endif
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
