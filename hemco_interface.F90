@@ -1351,6 +1351,11 @@ contains
         ! Do some testing and write emissions to the tape
         !-----------------------------------------------------------------------
 
+        ! HCO Index boundaries
+        HI = my_IE - my_IS + 1
+        HJ = my_JE - my_JS + 1
+        HL = LM
+
         ! For each species...
         do spcID = 1, HcoConfig%nModelSpc
             ! Zero out quantities first
@@ -1362,38 +1367,62 @@ contains
             ! if(masterproc) write(iulog,*) "HEMCO_CAM: Begin exporting " // trim(exportName)
 
             ! Get HEMCO emissions flux [kg/m2/s].
-            do K = 1, LM
-                HL = K                ! map to HEMCO index
-            do J = my_JS, my_JE
-                HJ = J - my_JS + 1
-            do I = my_IS, my_IE
-                HI = I - my_IS + 1
+            ! For performance optimization ... tap into HEMCO structure directly (ugly ugly)
+            ! No need to flip vertical here. The regridder will do it for us
+            if(associated(HcoState%Spc(spcID)%Emis%Val)) then
+                exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:HL)
+                ! do K = 1, LM
+                ! do J = my_JS, my_JE
+                !     HJ = J - my_JS + 1
 
-                ! Maybe no need to call GetHcoVal and just directly grab the pointer
-                ! instead?
-                call GetHcoVal(HcoState, ExtState, spcID, HI, HJ, HL, FND, emis=TMP)
-                if(FND) then
-                    exportFldHco(I,J,K) = TMP
+                !     exportFldHco(my_IS:my_IE,J,K) = HcoState%Spc(spcID)%Emis%Val(1:HI,J,K)
+                ! enddo
+                ! enddo
 
-                    if(masterproc .and. TMP < 0.0_r8) then
-                        write(iulog) "> **ERR** HEMCO_CAM negative value HI,HJ,HL,spcID,val", HI, HJ, HL, spcID, TMP
-                    endif
+                ! Regrid exportFldHco to CAM grid...
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                ! if(masterproc) write(iulog,*) "HEMCO_CAM: Regridded " // trim(exportName)
+
+                ! Write to history on CAM mesh
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
+
+                ! Write to physics buffer (pass model name)
+                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
+
+                if(masterproc) then
+                    write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
                 endif
-            enddo
-            enddo
-            enddo
+            else
+                if(masterproc) then 
+                    write(iulog,*) "HEMCO_CAM: No emissions HCO " // trim(exportName)
+                endif
+            endif
+
+            ! do K = 1, LM
+            !     HL = K                ! map to HEMCO index
+            ! do J = my_JS, my_JE
+            !     HJ = J - my_JS + 1
+            ! do I = my_IS, my_IE
+            !     HI = I - my_IS + 1
+
+            !     ! Maybe no need to call GetHcoVal and just directly grab the pointer
+            !     ! instead?
+            !     ! call GetHcoVal(HcoState, ExtState, spcID, HI, HJ, HL, FND, emis=TMP)
+
+            !     ! For performance optimization
+
+            !     if(FND) then
+            !         exportFldHco(I,J,K) = TMP
+
+            !         if(masterproc .and. TMP < 0.0_r8) then
+            !             write(iulog) "> **ERR** HEMCO_CAM negative value HI,HJ,HL,spcID,val", HI, HJ, HL, spcID, TMP
+            !         endif
+            !     endif
+            ! enddo
+            ! enddo
+            ! enddo
             ! if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
-
-            ! Regrid exportFldHco to CAM grid...
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Regridded " // trim(exportName)
-
-            ! Write to history on CAM mesh
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
-
-            ! Write to physics buffer (pass model name)
-            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
         enddo
 
         ! Do we need to do additional exports for CESM-GC?
@@ -1412,12 +1441,14 @@ contains
                 exportFldCAM(:,:)   = 0.0_r8
 
                 ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+                if(HMRC == HCO_SUCCESS .and. FND) then
+                    exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                    call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                    call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                    call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                endif
 
                 ! XLAIxx
                 write(exportNameTmp, '(a,i2.2)') 'XLAI', N
@@ -1429,12 +1460,14 @@ contains
                 exportFldCAM(:,:)   = 0.0_r8
 
                 ! Grab the pointer if available
-                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-                if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+                if(HMRC == HCO_SUCCESS .and. FND) then
+                    exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                    call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                    call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                    call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                endif
             enddo
 
             ! UVALBEDO
@@ -1447,12 +1480,14 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! SURF_SALINITY
             write(exportNameTmp, '(a)') 'surf_salinity'
@@ -1464,18 +1499,20 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            ! This is required as the physics buffer cannot store
-            ! `HCO_surf_salinity` as it is too long.. We thus export as
-            ! `HCO_salinity`
-            write(exportNameTmp, '(a)') 'salinity'
-            exportName = 'HCO_' // trim(exportNameTmp)
+                ! This is required as the physics buffer cannot store
+                ! `HCO_surf_salinity` as it is too long.. We thus export as
+                ! `HCO_salinity`
+                write(exportNameTmp, '(a)') 'salinity'
+                exportName = 'HCO_' // trim(exportNameTmp)
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! SURF_IODIDE
             write(exportNameTmp, '(a)') 'surf_iodide'
@@ -1487,16 +1524,18 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            ! See above comment about `HCO_surf_salinity`
-            write(exportNameTmp, '(a)') 'iodide'
-            exportName = 'HCO_' // trim(exportNameTmp)
+                ! See above comment about `HCO_surf_salinity`
+                write(exportNameTmp, '(a)') 'iodide'
+                exportName = 'HCO_' // trim(exportNameTmp)
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! OMOC_DJF
             write(exportNameTmp, '(a)') 'OMOC_DJF'
@@ -1508,12 +1547,14 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! OMOC_MAM
             write(exportNameTmp, '(a)') 'OMOC_MAM'
@@ -1525,12 +1566,14 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! OMOC_JJA
             write(exportNameTmp, '(a)') 'OMOC_JJA'
@@ -1542,12 +1585,14 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
 
             ! OMOC_SON
             write(exportNameTmp, '(a)') 'OMOC_SON'
@@ -1559,12 +1604,14 @@ contains
             exportFldCAM(:,:)   = 0.0_r8
 
             ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC)
-            if(HMRC == HCO_SUCCESS) exportFldHco(:,:,1) = Ptr2D ! Copy data in
+            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            if(HMRC == HCO_SUCCESS .and. FND) then
+                exportFldHco(:,:,1) = Ptr2D ! Copy data in
 
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-            call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+            endif
         endif
 
         dummy_0_CAM(:,:) = iam * 1.0_r8
