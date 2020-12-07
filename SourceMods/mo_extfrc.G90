@@ -471,7 +471,7 @@ contains
 
         ! species name: solsym(n)
         fldname_ns = 'HCO_' // trim(solsym(n))
-        if(masterproc) write(iulog,*) "mo_extfrc hemco: Adding extfrc for", fldname_ns
+        ! if(masterproc) write(iulog,*) "mo_extfrc hemco: Adding extfrc for", fldname_ns
 
         tmpIdx = pbuf_get_index(fldname_ns, RC)
         if(tmpIdx < 0) then
