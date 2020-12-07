@@ -446,7 +446,7 @@ contains
 
         HcoConfig%amIRoot   = masterproc
         
-        ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
+        HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
 
@@ -616,10 +616,12 @@ contains
         TmpLct => HcoState%ReadLists%Once
         ! Kludge: If LANDTYPE00 is available in one-time list, all exports for CAM
         ! will be initialized in the pbuf
+        !
+        ! Now detect UV_ALBEDO
         HCO_CESM2GCInputs = .false.
         do while(associated(TmpLct))
             if(associated(TmpLct%Dct)) then
-                if(trim(TmpLct%Dct%cName) .eq. 'LANDTYPE00') then
+                if(trim(TmpLct%Dct%cName) .eq. 'UV_ALBEDO') then
                     HCO_CESM2GCInputs = .true.
                     exit
                 endif
@@ -1370,7 +1372,7 @@ contains
             ! For performance optimization ... tap into HEMCO structure directly (ugly ugly)
             ! No need to flip vertical here. The regridder will do it for us
             if(associated(HcoState%Spc(spcID)%Emis%Val)) then
-                exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:HL)
+                exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:LM)
                 ! do K = 1, LM
                 ! do J = my_JS, my_JE
                 !     HJ = J - my_JS + 1
@@ -1379,17 +1381,6 @@ contains
                 ! enddo
                 ! enddo
 
-                ! Regrid exportFldHco to CAM grid...
-                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-                ! if(masterproc) write(iulog,*) "HEMCO_CAM: Regridded " // trim(exportName)
-
-                ! Write to history on CAM mesh
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
-
-                ! Write to physics buffer (pass model name)
-                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
-
                 if(masterproc) then
                     write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
                 endif
@@ -1397,6 +1388,19 @@ contains
                 if(masterproc) then 
                     write(iulog,*) "HEMCO_CAM: No emissions HCO " // trim(exportName)
                 endif
+            endif
+
+            ! Regrid exportFldHco to CAM grid...
+            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM, doRegrid=associated(HcoState%Spc(spcID)%Emis%Val))
+            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Regridded " // trim(exportName)
+
+            if(associated(HcoState%Spc(spcID)%Emis%Val)) then
+                ! Write to history on CAM mesh
+                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                ! if(masterproc) write(iulog,*) "HEMCO_CAM: Exported to history " // trim(exportName)
+
+                ! Write to physics buffer (pass model name)
+                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
             endif
 
             ! do K = 1, LM
