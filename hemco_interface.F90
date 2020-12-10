@@ -298,9 +298,6 @@ contains
         integer                      :: hour, minute, second, dt
         integer                      :: prev_day, prev_s, now_day, now_s
 
-        ! Dummy for allocation
-        real(ESMF_KIND_R8), pointer  :: dummyCAMExport(:,:)
-
         !-----------------------------------------------------------------------
 
         if(masterproc) then
@@ -393,12 +390,6 @@ contains
             write(iulog,*) "> First refresh of HEMCO Regrid descriptors"
         endif
 
-        ! Allocate a dummy export variable
-        allocate(dummyCAMExport(LM, my_CE), stat=RC)
-        ASSERT_(RC==0)
-
-        dummyCAMExport(:,:) = 0.0_r8
-
         !-----------------------------------------------------------------------
         ! Allocate HEMCO meteorological objects
         ! We are allocating globally for the whole HEMCO component here. This may
@@ -490,9 +481,6 @@ contains
             ! Physics buffer
             ! Note that _AddField will prepend HCO_, so do not add it here
             call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 3, hcoID=N)
-
-            ! Set to all zeros
-            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(N)%SpcName, N, dummyCAMExport)
         enddo
 
         !-----------------------------------------------------------------------
@@ -783,13 +771,6 @@ contains
 
             if(masterproc) then
                 write(iulog,*) "> HEMCO additional exports for CESM2-GC initialized!"
-            endif
-
-            !-----------------------------------------------------------------------
-            ! Deallocate and clean
-            !-----------------------------------------------------------------------
-            if(associated(dummyCAMExport)) then
-                deallocate(dummyCAMExport)
             endif
         endif
     end subroutine HCOI_Chunk_Init
@@ -1267,10 +1248,6 @@ contains
 
         call HCO_CalcVertGrid(HcoState, PSFC, ZSFC, TK, BXHEIGHT, PEDGE, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
-
-        ! debug
-        !write(6,*) "hemco cam pedge debug"
-        !write(6,*) PEDGE(1,1,:)
 
         ! Pass boundary layer height to HEMCO (PBLm = PBL mixing height) [m]
         call HCO_SetPBLm(HcoState, PBLM=State_HCO_PBLH, &
