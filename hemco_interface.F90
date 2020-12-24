@@ -28,6 +28,9 @@ module hemco_interface
     ! CAM export helpers
     use hco_cam_exports
 
+    ! CAM import helpers
+    use hco_cam_convert_state_mod
+
     ! Controls
     use cam_abortutils,           only: endrun      ! fatal terminator
     use cam_logfile,              only: iulog       ! output log handle
@@ -57,7 +60,7 @@ module hemco_interface
     use HCO_Error_Mod,            only: sp          ! HEMCO single precision used for Ptrs
     use HCO_Error_Mod,            only: HCO_SUCCESS, HCO_FAIL, HCO_VERSION
     use HCO_State_Mod,            only: HCO_State
-    use HCOX_State_Mod,           only: Ext_State   ! Note: Extensions unsupported
+    use HCOX_State_Mod,           only: Ext_State
     use HCO_Types_Mod,            only: ConfigObj
 
     use shr_kind_mod,             only: r8 => shr_kind_r8
@@ -72,7 +75,7 @@ module hemco_interface
     private :: HCO_GC_Run
     private :: HCO_GC_Final
 
-    private :: HCOI_Allocate_All
+    private :: HCOI_Initialize_Pbuf
 !
 ! !PUBLIC MEMBER FUNCTIONS:
 !
@@ -126,20 +129,8 @@ module hemco_interface
     ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
     ! We have to store the fields because the regridding can only take place within the GridComp.
     ! Fields are allocated after the internal grid is initialized (so my_* are avail)
-
-    ! Currently in hemco_interface.F90 for ease of devel, move to a container module later
-
-    ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
-    ! Arrays are flipped in order (k, i) for the regridder
-    real(r8), pointer                :: State_CAM_t(:,:)
-    real(r8), pointer                :: State_CAM_ps(:)
-    real(r8), pointer                :: State_CAM_pblh(:)
-
-    ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
-    ! HEMCO grid are set as POINTERs so it satisfies HEMCO which wants to point
-    real(r8), pointer                :: State_HCO_TK  (:,:,:)
-    real(r8), pointer                :: State_HCO_PSFC(:,:)   ! Wet?
-    real(r8), pointer                :: State_HCO_PBLH(:,:)   ! PBLH [m]
+    !
+    ! Moved to hco_cam_convert_state_mod, 12/16/20
 
 contains
 !EOC
@@ -253,7 +244,8 @@ contains
         use HCO_Types_Mod,    only: ListCont
         use HCO_VertGrid_Mod, only: HCO_VertGrid_Define
 
-        ! HEMCO extensions are unsupported for now.
+        ! HEMCO extensions initialization
+        use HCOX_Driver_Mod,  only: HCOX_Init
 !
 ! !REMARKS:
 !  HEMCO extensions are unsupported in the preliminary version, due to
@@ -263,6 +255,7 @@ contains
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
+!  15 Dec 2020 - H.P. Lin    - Implement HEMCO extensions that do require met
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -303,7 +296,7 @@ contains
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
-            write(iulog,*) "HEMCO_CAM interface version 0.1"
+            write(iulog,*) "HEMCO_CAM interface version 0.2"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -607,6 +600,14 @@ contains
         if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
 
         !-----------------------------------------------------------------------
+        ! Initialize HEMCO Extensions!
+        !-----------------------------------------------------------------------
+        call HCOX_Init(HcoState, ExtState, HMRC)
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
+
+        !-----------------------------------------------------------------------
         ! Additional exports: Verify if we need to add additional exports
         ! for integration with CESM-GC. (hplin, 4/15/20)
         !-----------------------------------------------------------------------
@@ -780,72 +781,45 @@ contains
 !------------------------------------------------------------------------------
 !BOP
 !
-! !IROUTINE: HCOI_Allocate_All
+! !IROUTINE: HCOI_Initialize_Pbuf
 !
-! !DESCRIPTION: HCOI\_Allocate\_All allocates temporary met fields for use in
-!  HEMCO.
+! !DESCRIPTION: HCOI\_Initialize\_Pbuf resets the physics buffer.
 !\\
 !\\
 ! !INTERFACE:
 !
-    subroutine HCOI_Allocate_All()
+    subroutine HCOI_Initialize_Pbuf()
 !
 ! !USES:
 !
         use cam_logfile,      only: iulog
         use spmd_utils,       only: masterproc
-!
-! !REMARKS:
-!  Fields are allocated here after initialization of the hco\_esmf\_grid.
-!  They are regridded inside the gridcomp.
-!  A "state conversion" to convert CAM met fields to GEOSFP format will
-!  need to be coordinated with fritzt later down the road (hplin, 3/27/20)
-!
-!  Note that arrays in CAM format stored in the HEMCO interface are (k, i) idxd
-!  for the regridder
+
 !
 ! !REVISION HISTORY:
-!  31 Mar 2020 - H.P. Lin    - Initial version
+!  14 Dec 2020 - H.P. Lin    - Initial version
 !EOP
 !------------------------------------------------------------------------------
 !BOC
 !
 ! !LOCAL VARIABLES:
 !
-        character(len=*), parameter  :: subname = 'HCOI_Allocate_All'
+        character(len=*), parameter  :: subname = 'HCOI_Initialize_Pbuf'
         integer                      :: RC                   ! ESMF return code
 
-        ! Assume success
-        RC = ESMF_SUCCESS
+        integer                      :: spcID
+        real(ESMF_KIND_R8)           :: zeroFldCAM(1:LM, 1:my_CE)
 
-        ! Sanity check
-        if(masterproc) then
-            write(iulog,*) "> HCOI_Allocate_All entering"
-        endif
+        ! Zero out quantities first
+        zeroFldCAM(:,:)   = 0.0_r8
 
-        ! PBL height [m]
-        ! Comes from pbuf
-        allocate(State_CAM_pblh(my_CE), stat=RC)
-        ASSERT_(RC==0)
+        ! Reset for each species
+        do spcID = 1, HcoConfig%nModelSpc
+            ! Write to physics buffer (pass model name)
+            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM)
+        enddo
 
-        allocate(State_HCO_PBLH(my_IM, my_JM), stat=RC)
-        ASSERT_(RC==0)
-
-        ! Surface pressure (wet) [Pa]
-        allocate(State_CAM_ps(my_CE), stat=RC)
-        ASSERT_(RC==0)
-
-        allocate(State_HCO_PSFC(my_IM, my_JM), stat=RC)
-        ASSERT_(RC==0)
-
-        ! T
-        allocate(State_CAM_t (LM, my_CE), stat=RC)
-        ASSERT_(RC==0)
-
-        allocate(State_HCO_TK(my_IM, my_JM, LM), stat=RC)
-        ASSERT_(RC==0)
-
-    end subroutine HCOI_Allocate_All
+    end subroutine HCOI_Initialize_Pbuf
 !EOC
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
@@ -901,15 +875,29 @@ contains
         character(len=*), parameter  :: subname = 'HCOI_Chunk_Run'
         integer                      :: RC                        ! Return code
 
-        integer                      :: I, J, K, lchnk            ! Loop idx
-        integer                      :: ncol
-
-        type(physics_buffer_desc), pointer :: pbuf_chnk(:)        ! slice of pbuf
-        ! pbuf indices:
-        integer                      :: index_pblh
+        logical, save                :: FIRST = .true.
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Running HCOI_Chunk_Run phase", phase
+        endif
+
+        ! For phase 1, before chemistry, reset all the physics buffer contents
+        ! to prevent trash data being read by other components.
+        ! (hplin, 12/15/20)
+        if(phase == 1) then
+
+            ! Only need to do this once to save time
+            if(FIRST) then
+
+                ! Pass the pbuf to the hco_cam_exports component so she has it...
+                hco_pbuf2d => pbuf2d
+
+                call HCOI_Initialize_Pbuf()
+
+                ! No longer first call
+                FIRST = .false.
+
+            endif
         endif
 
         ! We only run the gridded components on Phase 2 per recommendations
@@ -928,42 +916,9 @@ contains
             ! Pass the pbuf to the hco_cam_exports component so she has it...
             hco_pbuf2d => pbuf2d
 
-            ! Regrid necessary physics quantities from the CAM grid to the HEMCO grid
-            ! Phase 0: Prepare necessary pbuf indices to retrieve data from the buffer...
-
-            ! TODO: This prep phase might possibly be better moved into initialization.
-            ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
-            index_pblh = pbuf_get_index('pblh')
-
-
-            ! Phase 1: Store the fields in hemco_interface (copy)
-            I = 0
-            do lchnk = begchunk, endchunk    ! loop over all chunks in the physics grid
-                ncol = get_ncols_p(lchnk)    ! columns per chunk
-                pbuf_chnk => pbuf_get_chunk(pbuf2d, lchnk) ! get pbuf for this chunk...
-
-                ! Gather data from pbuf before we proceed
-                ! 2-D Fields: Write directly to pointer (does not need alloc).
-                call pbuf_get_field(pbuf_chnk, index_pblh, State_CAM_pblh)
-
-                ! Loop through the chunks and levs now
-                ! Sanity check: Left indices should be I, and r.h.s. should be J!!!
-                ! If it differs, you are likely wrong and reading out of bounds.
-                ! Two hours of debugging a 1.5GPa surface pressure entry has resulted
-                ! in the above comments. (hplin, 3/31/20)
-                do J = 1, ncol               ! loop over columns in the chunk
-                    I = I + 1                ! advance one column
-
-                    ! 3-D Fields
-                    do K = 1, LM             !        chunk    col, lev
-                        State_CAM_t(K,I) = phys_state(lchnk)%t(J,K)
-                    enddo
-
-                    ! 2-D Fields
-                    State_CAM_ps(I) = phys_state(lchnk)%ps(J)
-
-                enddo
-            enddo
+            ! Set fields from CAM state before run
+            call CAM_GetBefore_HCOI(cam_in, phys_state, pbuf2d, phase, &
+                                    HcoState, ExtState)
 
             ! Run the gridded component.
             call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
@@ -1040,6 +995,9 @@ contains
         use HCO_GeoTools_Mod,       only: HCO_CalcVertGrid, HCO_SetPBLm
 
         use HCO_State_Mod,          only: HCO_GetHcoId
+
+        ! HEMCO Extensions
+        use HCOX_Driver_Mod,        only : HCOX_Run
 
 
 !
@@ -1189,9 +1147,7 @@ contains
         !-----------------------------------------------------------------------
         ! Regrid necessary meteorological quantities
         !-----------------------------------------------------------------------
-        call HCO_Grid_CAM2HCO_2D(State_CAM_ps,     State_HCO_PSFC  )
-        call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH  )
-        call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK    )
+        call CAM_RegridSet_HCOI(HcoState, ExtState)
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO"
@@ -1207,23 +1163,6 @@ contains
             ! TK: 288 283 277 271 266 261 ... 250 251 252
             ! Seems like the vertical is OK for now
         endif
-        ! write(6,*) "HCO - PBLH(:,:), min, max", minval(State_HCO_PBLH(:,:)), maxval(State_HCO_PBLH(:,:))
-        ! write(6,*) State_HCO_PBLH(:,:)
-
-        ! write(6,*) "CAM - PBLH(:,:), min, max", minval(State_CAM_pblh(:)), maxval(State_CAM_pblh(:))
-        ! write(6,*) State_CAM_pblh(:)
-
-        ! write(6,*) "HCO - PSFC(:,:), min, max", minval(State_HCO_PSFC(:,:)), maxval(State_HCO_PSFC(:,:))
-        ! write(6,*) State_HCO_PSFC(:,:)
-
-        ! write(6,*) "CAM - ps(:,:), min, max", minval(State_CAM_ps(:)), maxval(State_CAM_ps(:))
-        ! write(6,*) State_CAM_ps(:)
-
-        ! write(6,*) "HCO - TK(:,:,1), min, max (gl)", minval(State_HCO_TK(:,:,:)), maxval(State_HCO_TK(:,:,:))
-        ! write(6,*) State_HCO_TK(:,:,1)
-
-        ! write(6,*) "CAM - TK(:,:), min, max", minval(State_CAM_t(1,:)), maxval(State_CAM_t(1,:))
-        ! write(6,*) State_CAM_t(1,:)
 
         !-----------------------------------------------------------------------
         ! Continue setting up HEMCO
@@ -1314,6 +1253,26 @@ contains
         if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
 
         !-----------------------------------------------------------------------
+        ! Run HEMCO Extensions!
+        !-----------------------------------------------------------------------
+        call HCOX_Run(HcoState, ExtState, HMRC)
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CAM: HCOX_Run (extensions) has failed!"
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!"
+            write(iulog,*) "A critical component in HEMCO failed to run."
+            write(iulog,*) "This may be due to misconfiguration, or a bug."
+            write(iulog,*) "Please refer to the HEMCO.log log file in your"
+            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
+        ASSERT_(HMRC==HCO_SUCCESS)
+
+        if(masterproc) write(iulog,*) "HEMCO_CAM: HCOX_Run"
+
+
+        !-----------------------------------------------------------------------
         ! Update "autofill" diagnostics.
         ! Update all 'AutoFill' diagnostics. This makes sure that all
         ! diagnostics fields with the 'AutoFill' flag are up-to-date. The
@@ -1350,13 +1309,13 @@ contains
 
             ! Build history / pbuf field name (HCO_NO, HCO_CO, etc.)
             exportName = 'HCO_' // trim(HcoConfig%ModelSpc(spcID)%SpcName)
-            doExport   = ( FIRST .or. associated(HcoState%Spc(spcID)%Emis%Val) )
+            doExport   = (FIRST .or. associated(HcoState%Spc(spcID)%Emis%Val))
             ! if(masterproc) write(iulog,*) "HEMCO_CAM: Begin exporting " // trim(exportName)
 
             ! Get HEMCO emissions flux [kg/m2/s].
             ! For performance optimization ... tap into HEMCO structure directly (ugly ugly)
             ! No need to flip vertical here. The regridder will do it for us
-            if( associated(HcoState%Spc(spcID)%Emis%Val) ) then
+            if(associated(HcoState%Spc(spcID)%Emis%Val)) then
                 exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:LM)
 
                 if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
@@ -1366,7 +1325,7 @@ contains
             ! Regrid exportFldHco to CAM grid...
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM, doRegrid=doExport)
 
-            if( doExport ) then
+            if(doExport) then
                 ! Write to history on CAM mesh
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
 
@@ -1396,11 +1355,11 @@ contains
                 ! Grab the pointer if available
                 call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
                 doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-                if ( HMRC == HCO_SUCCESS .and. FND ) then
+                if(HMRC == HCO_SUCCESS .and. FND) then
                     exportFldHco(:,:,1) = Ptr2D ! Copy data in
                 endif
                 call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-                if ( doExport ) then
+                if(doExport) then
                     call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                     call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
                 endif
@@ -1417,11 +1376,11 @@ contains
                 ! Grab the pointer if available
                 call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
                 doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-                if ( HMRC == HCO_SUCCESS .and. FND ) then
+                if(HMRC == HCO_SUCCESS .and. FND) then
                     exportFldHco(:,:,1) = Ptr2D ! Copy data in
                 endif
                 call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-                if ( doExport ) then
+                if(doExport) then
                     call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                     call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
                 endif
@@ -1439,11 +1398,11 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1460,7 +1419,7 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
                 ! This is required as the physics buffer cannot store
                 ! `HCO_surf_salinity` as it is too long.. We thus export as
@@ -1469,7 +1428,7 @@ contains
                 exportName = 'HCO_' // trim(exportNameTmp)
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1486,14 +1445,14 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
                 ! See above comment about `HCO_surf_salinity`
                 write(exportNameTmp, '(a)') 'iodide'
                 exportName = 'HCO_' // trim(exportNameTmp)
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1510,11 +1469,11 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1531,11 +1490,11 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1552,11 +1511,11 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
@@ -1573,11 +1532,11 @@ contains
             ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            if ( HMRC == HCO_SUCCESS .and. FND ) then
+            if(HMRC == HCO_SUCCESS .and. FND) then
                 exportFldHco(:,:,1) = Ptr2D ! Copy data in
             endif
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
-            if ( doExport ) then
+            if(doExport) then
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
                 call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
             endif
