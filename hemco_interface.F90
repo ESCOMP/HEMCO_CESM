@@ -411,15 +411,15 @@ contains
         ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
         !
         ! This call should eventually be reflected elsewhere?
-        call addfld("PETID_CAM_TEST", (/'lev'/), 'I', '1',          &
+        call addfld("DIAG_CAM_TEST", (/'lev'/), 'I', '1',          &
                     'HEMCO Debug, PETID written on CAM',             &
                     gridname="physgrid")
-        call add_default("PETID_CAM_TEST", 2, 'I')      ! Make this field always ON
+        call add_default("DIAG_CAM_TEST", 2, 'I')      ! Make this field always ON
 
-        call addfld("PETID_HCO_TEST", (/'lev'/), 'I', '1',          &
-                    'HEMCO Debug, PETID written on HCO',             &
+        call addfld("DIAG_HCO_TEST", (/'lev'/), 'I', '1',          &
+                    'HEMCO Debug Data',             &
                     gridname="physgrid")
-        call add_default("PETID_HCO_TEST", 2, 'I')      ! Make this field always ON
+        call add_default("DIAG_HCO_TEST", 2, 'I')      ! Make this field always ON
 
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
@@ -437,6 +437,8 @@ contains
         HcoConfig%amIRoot   = masterproc
         
         !HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
+       
+
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
 
@@ -536,6 +538,60 @@ contains
             ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
             ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
             ! (hplin, 3/29/20)
+
+            ! If is CESM-GC, then set Henry's law constants for SeaFlux
+            ! KLUDGE by hplin: 1/3/21
+            ! For defined species, hard code the Henry* values for now so we can work
+            ! with SeaFlux. This fragmentation will cause issues down the road, FIXME
+            if(HcoState%Spc(N)%SpcName .eq. "CH3I") then
+                ! 101.325_r8
+                HcoState%Spc(N)%HenryK0  = 2.0e-3_r8 * 101.325_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 3.6e+3_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+
+            if(HcoState%Spc(N)%SpcName .eq. "DMS") then
+                ! 101.325_r8
+                HcoState%Spc(N)%HenryK0  = 4.80e-1_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 3100.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+
+            if(HcoState%Spc(N)%SpcName .eq. "ACET") then
+                ! 101.325_r8. using new henry constants
+                HcoState%Spc(N)%HenryK0  = 2.7e-1_r8 * 101.325_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 5500.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+
+            if(HcoState%Spc(N)%SpcName .eq. "MOH") then
+                ! 101.325_r8
+                HcoState%Spc(N)%HenryK0  = 2.03e+2_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 5600.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+
+            if(HcoState%Spc(N)%SpcName .eq. "ALD2") then
+                ! 101.325_r8. using new henry constants
+                HcoState%Spc(N)%HenryK0  = 1.30e-01_r8 * 101.325_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 5900.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+            
+            if(HcoState%Spc(N)%SpcName .eq. "MENO3") then
+                ! 101.325_r8
+                HcoState%Spc(N)%HenryK0  = 1.1e+1_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 4700.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+            
+            if(HcoState%Spc(N)%SpcName .eq. "ETNO3") then
+                ! 101.325_r8
+                HcoState%Spc(N)%HenryK0  = 1.6_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryCR  = 5400.0_r8 ! [K]
+                HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
+            endif
+
             ! HcoState%Spc(N)%HenryK0 ! [M/atm]
             ! HcoState%Spc(N)%HenryCR ! [K]
             ! HcoState%Spc(N)%HenryPKA ! [1]
@@ -1544,15 +1600,40 @@ contains
             if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
         endif
 
-        dummy_0_CAM(:,:) = iam * 1.0_r8
-        dummy_1(:,:,:) = iam * 1.0_r8
+        ! dummy_0_CAM(:,:) = iam * 1.0_r8
+        
+        ! dummy_1(:,:,:) = iam * 1.0_r8
+
+        ! test data, but on the CAM grid... note vertical is inverted
+        ! dummy_0_CAM sizes 16384x512. remember dummy_CAM is K, I idx
+        ! my_CE: 512, pver: 32
+        write(6,*) "hplin debug: sizes dummy", size(dummy_0_CAM, 1), size(dummy_0_CAM, 2), &
+                   size(State_CAM_ps, 1), my_CE, pver
+        dummy_0_CAM(:,:) = 0.0_r8
+        dummy_0_CAM(1,:) = State_CAM_TS
+        dummy_0_CAM(2,:) = State_CAM_U10M
+        dummy_0_CAM(3,:) = State_CAM_V10M
+        dummy_0_CAM(4,:) = State_CAM_ALBD
+        dummy_0_CAM(5,:) = State_CAM_LWI
+        dummy_0_CAM(6,:) = State_CAM_ps
+        dummy_0_CAM(7,:) = State_CAM_pblh
+
+        ! fill with some test data, but clean the data first!
+        dummy_1(:,:,:) = 0.0_r8
+        dummy_1(:,:,1) = State_HCO_TS
+        dummy_1(:,:,2) = State_HCO_U10M
+        dummy_1(:,:,3) = State_HCO_V10M
+        dummy_1(:,:,4) = State_HCO_ALBD
+        dummy_1(:,:,5) = State_HCO_WLI
+        dummy_1(:,:,6) = State_HCO_PSFC
+        dummy_1(:,:,7) = State_HCO_PBLH
 
         ! Regrid to CAM physics mesh!
         call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
 
         ! Write to history on CAM mesh
-        call HCO_Export_History_CAM3D("PETID_HCO_TEST", dummy_1_CAM)
-        call HCO_Export_History_CAM3D("PETID_CAM_TEST", dummy_0_CAM)
+        call HCO_Export_History_CAM3D("DIAG_HCO_TEST", dummy_1_CAM)
+        call HCO_Export_History_CAM3D("DIAG_CAM_TEST", dummy_0_CAM)
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CAM: Exports completed for this timestep!"

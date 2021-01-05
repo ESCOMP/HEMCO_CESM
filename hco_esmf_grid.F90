@@ -2079,21 +2079,25 @@ contains
         type(ESMF_Field), intent(in)           :: field_in
         integer, intent(in)                    :: IS, IE      ! Start and end indices (dim1)
         integer, intent(in)                    :: JS, JE      ! Start and end indices (dim2)
-        logical, optional, intent(in)          :: flip        ! Flip the FIRST dimension?
+        logical, optional, intent(in)          :: flip        ! Flip the FIRST dimension? Presence will flip
 !
 ! !OUTPUT PARAMETERS:
 !
         real(r8), intent(out)                  :: data_out(IS:IE, JS:JE)
 !
 ! !REMARKS:
-!  If the flip argument is set to .true., then the FIRST dimension (IS:IE) will be flipped.
+!  If the flip argument is PROVIDED, then the FIRST dimension (IS:IE) will be flipped.
 !  This is used when retrieving a CAM field regridded from HEMCO, when you have to flip
 !  the vertical to fit correctly. The dimensions of a CAM 3d data is a 2d chunked array
 !  with indices (k, i) so... the first dimension has to be flipped instead.
 !
+!  YES - THE FLIP ARGUMENT IS NOT READ. ITS MERE PRESENCE WILL TRIGGER .TRUE. FOR FLIPPING.
+!  THIS IS INTENDED BEHAVIOR TO CIRCUMVENT AN INTEL COMPILER BUG.
+!
 ! !REVISION HISTORY:
 !  23 Feb 2020 - H.P. Lin    - Initial version
 !  30 May 2020 - H.P. Lin    - Add flip parameter
+!  03 Jan 2021 - H.P. Lin    - I hate compiler bugs with PRESENT var
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -2106,7 +2110,9 @@ contains
         logical                     :: flip1d = .false.
 
         if(present(flip)) then
-            flip1d = flip
+            flip1d = .true.
+        else
+            flip1d = .false.
         endif
 
         call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)
@@ -2156,6 +2162,9 @@ contains
 !  This is used when retrieving a HEMCO field regridded from CAM, when you have to flip
 !  the vertical to fit correctly.
 !
+!  YES - THE FLIP ARGUMENT IS NOT READ. ITS MERE PRESENCE WILL TRIGGER .TRUE. FOR FLIPPING.
+!  THIS IS INTENDED BEHAVIOR TO CIRCUMVENT AN INTEL COMPILER BUG.
+!
 ! !REVISION HISTORY:
 !  23 Feb 2020 - H.P. Lin    - Initial version
 !  30 May 2020 - H.P. Lin    - Add flip parameter
@@ -2171,7 +2180,9 @@ contains
         logical                     :: flip3d = .false.
 
         if(present(flip)) then
-            flip3d = flip
+            flip3d = .true.
+        else
+            flip3d = .false.
         endif
 
         call ESMF_FieldGet(field_in, localDE=0, farrayPtr=fptr, rc=RC)

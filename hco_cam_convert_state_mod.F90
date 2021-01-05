@@ -76,15 +76,15 @@ module hco_cam_convert_state_mod
 !
     ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
     ! Arrays are flipped in order (k, i) for the regridder
-    real(r8), pointer                :: State_CAM_t(:,:)
-    real(r8), pointer                :: State_CAM_ps(:)
-    real(r8), pointer                :: State_CAM_pblh(:)
+    real(r8), pointer, public        :: State_CAM_t(:,:)
+    real(r8), pointer, public        :: State_CAM_ps(:)
+    real(r8), pointer, public        :: State_CAM_pblh(:)
 
-    real(r8), pointer                :: State_CAM_TS(:)
-    real(r8), pointer                :: State_CAM_U10M(:)
-    real(r8), pointer                :: State_CAM_V10M(:)
-    real(r8), pointer                :: State_CAM_ALBD(:)
-    real(r8), pointer                :: State_CAM_LWI(:)
+    real(r8), pointer, public        :: State_CAM_TS(:)
+    real(r8), pointer, public        :: State_CAM_U10M(:)
+    real(r8), pointer, public        :: State_CAM_V10M(:)
+    real(r8), pointer, public        :: State_CAM_ALBD(:)
+    real(r8), pointer, public        :: State_CAM_LWI(:)
 
     ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
     ! HEMCO grid are set as POINTERs so it satisfies HEMCO which wants to point
@@ -192,6 +192,10 @@ contains
         allocate(State_HCO_F_OF_PBL(my_IM, my_JM, LM), stat=RC)
 
         ! Clear values
+        State_HCO_PBLH(:,:) = 0.0_r8
+        State_HCO_PSFC(:,:) = 0.0_r8
+        State_HCO_TK(:,:,:) = 0.0_r8
+        State_HCO_TS(:,:) = 0.0_r8
         State_HCO_U10M(:,:) = 0.0_r8
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
@@ -337,7 +341,7 @@ contains
                         State_CAM_LWI(I) = 2
                     endif
 
-                    if(cam_in(lchnk)%ocnFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%ocnFrac(J))) then
+                    if(cam_in(lchnk)%ocnFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%iceFrac(J))) then
                         State_CAM_LWI(I) = 0
                     endif
                 endif
@@ -436,12 +440,14 @@ contains
             call HCO_Grid_CAM2HCO_2D(State_CAM_TS, State_HCO_TS    )
 
             ! Point to appropriate location
-            if(FIRST) then
-                call ExtDat_Set(HcoState, ExtState%TSKIN, 'TSKIN_FOR_EMIS', &
-                                RC,       FIRST,          State_HCO_TS)
+            call ExtDat_Set(HcoState, ExtState%TSKIN, 'TSKIN_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_TS)
 
-                call ExtDat_Set(HcoState, ExtState%T2M,  'T2M_FOR_EMIS', &
-                                RC,       FIRST,          State_HCO_TS)
+            call ExtDat_Set(HcoState, ExtState%T2M,  'T2M_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_TS)
+        
+            if(masterproc) then
+                write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
             endif
         endif
 
@@ -450,23 +456,19 @@ contains
             call HCO_Grid_CAM2HCO_2D(State_CAM_U10M, State_HCO_U10M)
             call HCO_Grid_CAM2HCO_2D(State_CAM_V10M, State_HCO_V10M)
 
-            if(FIRST) then
-                call ExtDat_Set(HcoState, ExtState%U10M,  'U10M_FOR_EMIS', &
-                                RC,       FIRST,          State_HCO_U10M)
+            call ExtDat_Set(HcoState, ExtState%U10M,  'U10M_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_U10M)
 
-                call ExtDat_Set(HcoState, ExtState%V10M,  'V10M_FOR_EMIS', &
-                                RC,       FIRST,          State_HCO_V10M)
-            endif
+            call ExtDat_Set(HcoState, ExtState%V10M,  'V10M_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_V10M)
         endif
 
         ! Visible surface albedo [1]
         if(ExtState%ALBD%DoUse) then
             call HCO_Grid_CAM2HCO_2D(State_CAM_ALBD, State_HCO_ALBD)
 
-            if(FIRST) then
-                call ExtDat_Set(HcoState, ExtState%ALBD,  'ALBD_FOR_EMIS', &
-                                RC,       FIRST,          State_HCO_ALBD)
-            endif
+            call ExtDat_Set(HcoState, ExtState%ALBD,  'ALBD_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_ALBD)
         endif
 
         ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)
@@ -489,18 +491,14 @@ contains
                 enddo
             enddo
 
-            if(FIRST) then
-                call ExtDat_Set(HcoState, ExtState%WLI,  'WLI_FOR_EMIS', &
-                                RC,       FIRST,         State_HCO_WLI)
-            endif
+            call ExtDat_Set(HcoState, ExtState%WLI,  'WLI_FOR_EMIS', &
+                            RC,       FIRST,         State_HCO_WLI)
         endif
 
         ! FIXME STUB: Just set zeros for F_OF_PBL hplin 12/21/20
         if(ExtState%FRAC_OF_PBL%DoUse) then
-            if(FIRST) then
-                call ExtDat_Set(HcoState, ExtState%FRAC_OF_PBL,  'FRAC_OF_PBL_FOR_EMIS', &
-                                RC,       FIRST,                 State_HCO_F_OF_PBL)
-            endif
+            call ExtDat_Set(HcoState, ExtState%FRAC_OF_PBL,  'FRAC_OF_PBL_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_F_OF_PBL)
         endif
 
         if(FIRST) then
