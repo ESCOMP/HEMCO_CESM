@@ -1607,8 +1607,9 @@ contains
         ! test data, but on the CAM grid... note vertical is inverted
         ! dummy_0_CAM sizes 16384x512. remember dummy_CAM is K, I idx
         ! my_CE: 512, pver: 32
-        write(6,*) "hplin debug: sizes dummy", size(dummy_0_CAM, 1), size(dummy_0_CAM, 2), &
-                   size(State_CAM_ps, 1), my_CE, pver
+        ! write(6,*) "hplin debug: sizes dummy", size(dummy_0_CAM, 1), size(dummy_0_CAM, 2), &
+        !            size(State_CAM_ps, 1), my_CE, pver
+
         dummy_0_CAM(:,:) = 0.0_r8
         dummy_0_CAM(1,:) = State_CAM_TS
         dummy_0_CAM(2,:) = State_CAM_U10M
@@ -1617,6 +1618,9 @@ contains
         dummy_0_CAM(5,:) = State_CAM_LWI
         dummy_0_CAM(6,:) = State_CAM_ps
         dummy_0_CAM(7,:) = State_CAM_pblh
+        dummy_0_CAM(8,:) = State_CAM_CSZA
+        dummy_0_CAM(9,:) = State_CAM_psdry
+        dummy_0_CAM(9,:) = State_CAM_chmO3(LM,:)
 
         ! fill with some test data, but clean the data first!
         dummy_1(:,:,:) = 0.0_r8
@@ -1627,6 +1631,12 @@ contains
         dummy_1(:,:,5) = State_HCO_WLI
         dummy_1(:,:,6) = State_HCO_PSFC
         dummy_1(:,:,7) = State_HCO_PBLH
+        dummy_1(:,:,8) = State_HCO_CSZA
+        dummy_1(:,:,9) = State_HCO_AIR(:,:,1)
+        dummy_1(:,:,10) = State_HCO_AIR(:,:,2)
+        dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
+        dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
+        dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
 
         ! Regrid to CAM physics mesh!
         call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)

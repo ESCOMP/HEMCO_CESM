@@ -27,8 +27,10 @@ module hco_cam_convert_state_mod
     use cam_logfile,              only: iulog
 
     ! Grid information
+    ! Remember - if information is pulled from hco_esmf_grid, GLOBAL INDICES MUST BE USED!
     use hco_esmf_grid,            only: my_IM, my_JM, LM
     use hco_esmf_grid,            only: my_CE
+    use hco_esmf_grid,            only: my_IS, my_IE, my_JS, my_JE
     use hco_esmf_grid,            only: HCO_Grid_CAM2HCO_2D, HCO_Grid_CAM2HCO_3D
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
@@ -52,6 +54,10 @@ module hco_cam_convert_state_mod
     public       :: CAM_GetBefore_HCOI
     public       :: CAM_RegridSet_HCOI
 !
+! !PRIVATE MEMBER FUNCTIONS:
+!
+    ! private      :: CAM_GC_ComputeMet
+!
 ! !REMARKS:
 !  The code here is structurally based on the WRF-GC coupler, but the actual
 !  conversion logic is from CESM-GC.
@@ -66,8 +72,31 @@ module hco_cam_convert_state_mod
 !
 !  All indices are native, and all your base are belong to us. (hplin, 12/15/20)
 !
+!------------------------------------------------------------------------------
+!  LIST OF SUPPORTED MET FIELD CONVERSIONS
+!------------------------------------------------------------------------------
+!  HEMCO format
+!  ----------------------------------------------------------------------------
+!  AIR (airmass/AD)
+!  ALBD
+!  F_OF_PBL
+!  O3
+!  PBLH
+!  PSFC
+!  SUNCOS
+!  T2M
+!  TK
+!  TSKIN
+!  U10M
+!  V10M
+!
+!  STUBS
+!  ----------------------------------------------------------------------------
+!  GWETTOP = 0
+!
 ! !REVISION HISTORY:
 !  15 Dec 2020 - H.P. Lin    - Initial version
+!  04 Feb 2021 - H.P. Lin    - Add State_GC_* for some GC-specific intermediate qtys
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -78,6 +107,7 @@ module hco_cam_convert_state_mod
     ! Arrays are flipped in order (k, i) for the regridder
     real(r8), pointer, public        :: State_CAM_t(:,:)
     real(r8), pointer, public        :: State_CAM_ps(:)
+    real(r8), pointer, public        :: State_CAM_psdry(:)
     real(r8), pointer, public        :: State_CAM_pblh(:)
 
     real(r8), pointer, public        :: State_CAM_TS(:)
@@ -86,8 +116,20 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_ALBD(:)
     real(r8), pointer, public        :: State_CAM_LWI(:)
 
+    real(r8), pointer, public        :: State_CAM_CSZA(:)
+
+    ! Chem Constituents on CAM grid
+    real(r8), pointer, public        :: State_CAM_chmO3 (:,:)
+    real(r8), pointer, public        :: State_CAM_chmNO (:,:)
+    real(r8), pointer, public        :: State_CAM_chmNO2(:,:)
+
     ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
     ! HEMCO grid are set as POINTERs so it satisfies HEMCO which wants to point
+    real(r8), pointer, public        :: State_GC_PSC2_DRY(:,:)  ! Dry pressure from PSC2_DRY
+    real(r8), pointer, public        :: State_GC_DELP_DRY(:,:,:)! Delta dry pressure
+
+    real(r8), pointer, public        :: State_HCO_AIR (:,:,:)   ! GC_AD, mass of dry air in grid box [kg]
+
     real(r8), pointer, public        :: State_HCO_TK  (:,:,:)
     real(r8), pointer, public        :: State_HCO_PSFC(:,:)   ! Wet?
     real(r8), pointer, public        :: State_HCO_PBLH(:,:)   ! PBLH [m]
@@ -98,6 +140,13 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_ALBD(:,:)
     real(r8), pointer, public        :: State_HCO_WLI(:,:)
     real(r8), pointer, public        :: State_HCO_F_OF_PBL(:,:,:)
+
+    real(r8), pointer, public        :: State_HCO_CSZA(:,:)
+
+    ! Chem Constituents on HEMCO grid
+    real(r8), pointer, public        :: State_HCO_chmO3 (:,:,:)
+    real(r8), pointer, public        :: State_HCO_chmNO (:,:,:)
+    real(r8), pointer, public        :: State_HCO_chmNO2(:,:,:)
 
 
 contains
@@ -165,6 +214,13 @@ contains
         allocate(State_HCO_PSFC(my_IM, my_JM), stat=RC)
         ASSERT_(RC==0)
 
+        ! Surface pressure (dry) [Pa]
+        allocate(State_CAM_psdry(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_GC_PSC2_DRY(my_IM, my_JM), stat=RC)
+        ASSERT_(RC==0)
+
         ! T
         allocate(State_CAM_t (LM, my_CE), stat=RC)
         ASSERT_(RC==0)
@@ -183,24 +239,52 @@ contains
         ASSERT_(RC==0)
         allocate(State_CAM_LWI  (my_CE), stat=RC)
         ASSERT_(RC==0)
+        allocate(State_CAM_CSZA (my_CE), stat=RC)
+        ASSERT_(RC==0)
 
+        ! Constituents
+        allocate(State_CAM_chmO3(LM, my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_CAM_chmNO(LM, my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_CAM_chmNO2(LM, my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        ! On HEMCO grid
+        allocate(State_HCO_AIR(my_IM, my_JM, LM), stat=RC)
         allocate(State_HCO_TS(my_IM, my_JM), stat=RC)
         allocate(State_HCO_U10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_V10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_ALBD(my_IM, my_JM), stat=RC)
         allocate(State_HCO_WLI(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_CSZA(my_IM, my_JM), stat=RC)
         allocate(State_HCO_F_OF_PBL(my_IM, my_JM, LM), stat=RC)
+        allocate(State_GC_DELP_DRY(my_IM, my_JM, LM), stat=RC)
+
+        allocate(State_HCO_chmO3 (my_IM, my_JM, LM), stat=RC)
+        allocate(State_HCO_chmNO (my_IM, my_JM, LM), stat=RC)
+        allocate(State_HCO_chmNO2(my_IM, my_JM, LM), stat=RC)
 
         ! Clear values
+        State_HCO_AIR(:,:,:) = 0.0_r8
         State_HCO_PBLH(:,:) = 0.0_r8
         State_HCO_PSFC(:,:) = 0.0_r8
+        State_GC_PSC2_DRY(:,:) = 0.0_r8
         State_HCO_TK(:,:,:) = 0.0_r8
         State_HCO_TS(:,:) = 0.0_r8
         State_HCO_U10M(:,:) = 0.0_r8
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
         State_HCO_WLI(:,:) = 0.0_r8
+        State_HCO_CSZA(:,:) = 0.0_r8
         State_HCO_F_OF_PBL(:,:,:) = 0.0_r8
+        State_GC_DELP_DRY(:,:,:) = 0.0_r8
+
+        State_HCO_chmO3(:,:,:) = 0.0_r8
+        State_HCO_chmNO(:,:,:) = 0.0_r8
+        State_HCO_chmNO2(:,:,:) = 0.0_r8
 
     end subroutine HCOI_Allocate_All
 !EOC
@@ -228,10 +312,20 @@ contains
 
         ! Physics grid
         use phys_grid,      only: get_ncols_p
+        use phys_grid,      only: get_rlon_all_p, get_rlat_all_p
+
+        use ppgrid,         only: pcols                   ! max. # of columns in chunk
 
         ! CAM physics buffer (some fields are here and some are in phys state)
         use physics_buffer, only: pbuf_get_chunk, pbuf_get_field
         use physics_buffer, only: pbuf_get_index
+
+        ! Time description and zenith angle data
+        use orbit,          only: zenith
+        use time_manager,   only: get_curr_calday
+
+        ! Constituent information to retrieve from physics state
+        use constituents,   only: cnst_get_ind
 
         ! Output and mpi
         use cam_logfile,    only: iulog
@@ -254,8 +348,13 @@ contains
 !  Also needs HEMCO and HEMCO extensions state information in order to check
 !  whether we actually need to populate required meteorology fields
 !
+!  Note for CSZA:
+!  - We do not have access to the state here, so we need to get geo data and zenith
+!    using a different method, by looping through all chunks.
+!
 ! !REVISION HISTORY:
 !  16 Dec 2020 - H.P. Lin    - Initial version
+!  04 Feb 2021 - H.P. Lin    - Add CSZA calculation with geographical data
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -269,9 +368,22 @@ contains
         integer                      :: ncol
 
         type(physics_buffer_desc), pointer :: pbuf_chnk(:)        ! slice of pbuf
+        real(r8), pointer            :: pbuf_tmp_pblh(:)          ! temp 2-D data slice (pcol), points to raw
         ! pbuf indices:
         integer                      :: index_pblh
 
+        ! constituent indices:
+        integer                      :: id_O3, id_NO, id_NO2
+
+        ! Temporary geographical indices, allocated to max size (pcols)
+        ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
+        real(r8)                     :: lchnk_rlats(1:pcols), lchnk_rlons(1:pcols)
+        real(r8)                     :: lchnk_zenith(1:pcols)
+
+        ! Current calday for SZA
+        real(r8)                     :: calday
+
+        !----------------------------------------------------
         ! Assume success
         RC = ESMF_SUCCESS
 
@@ -286,6 +398,14 @@ contains
         ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
         index_pblh = pbuf_get_index('pblh')
 
+        ! Get calday for cosza (current time, not midpoint of dt)
+        calday = get_curr_calday()
+
+        ! Setup constituent indices so their concentrations can be retrieved
+        ! from state%q (MMR)
+        call cnst_get_ind('O3', id_O3)
+        call cnst_get_ind('NO', id_NO)
+        call cnst_get_ind('NO2', id_NO2)
 
         ! Phase 1: Store the fields in hemco_interface (copy)
         I = 0
@@ -293,9 +413,19 @@ contains
             ncol = get_ncols_p(lchnk)    ! columns per chunk
             pbuf_chnk => pbuf_get_chunk(pbuf2d, lchnk) ! get pbuf for this chunk...
 
+            ! Gather geographical information
+            if(masterproc) write(iulog,*) "* hplin debug in lchnk = ", lchnk, ", ncol = ", ncol, " (max pcols = ", pcols, "), my_CE = ", my_CE
+            call get_rlat_all_p(lchnk, ncol, lchnk_rlats)
+            call get_rlon_all_p(lchnk, ncol, lchnk_rlons)
+
+            ! Compute zenith for chunk
+            ! (could also do it all at once but it would require a separate buffer to store ll...)
+            ! FIXME hplin: this slicing might be a little inefficient
+            call zenith(calday, lchnk_rlats(1:ncol), lchnk_rlons(1:ncol), lchnk_zenith(1:ncol), ncol)
+
             ! Gather data from pbuf before we proceed
             ! 2-D Fields: Write directly to pointer (does not need alloc).
-            call pbuf_get_field(pbuf_chnk, index_pblh, State_CAM_pblh)
+            call pbuf_get_field(pbuf_chnk, index_pblh, pbuf_tmp_pblh)
 
             ! Loop through the chunks and levs now
             ! Sanity check: Left indices should be I, and r.h.s. should be J!!!
@@ -308,13 +438,30 @@ contains
                 ! 3-D Fields
                 do K = 1, LM             !        chunk    col, lev
                     State_CAM_t(K,I) = phys_state(lchnk)%t(J,K)
+
+                    State_CAM_chmO3(K,I) = phys_state(lchnk)%q(J,K,id_O3)
+                    State_CAM_chmNO(K,I) = phys_state(lchnk)%q(J,K,id_NO)
+                    State_CAM_chmNO2(K,I) = phys_state(lchnk)%q(J,K,id_NO2)
                 enddo
 
                 !----------------------------------------
                 ! 2-D Fields
                 !----------------------------------------
+
+                ! DEBUG: Write to CSZA as a test for latitude to make sure we are doing correctly
+                ! State_CAM_CSZA(I) = lchnk_rlats(J)
+
+                ! PBLH [m]
+                State_CAM_pblh(I) = pbuf_tmp_pblh(J)
+
+                ! COSZA Cosine of zenith angle [1]
+                State_CAM_CSZA(I) = lchnk_zenith(J)
+
                 ! Sea level pressure [hPa]
                 State_CAM_ps(I) = phys_state(lchnk)%ps(J)
+
+                ! Dry pressure [hPa]
+                State_CAM_psdry(I) = phys_state(lchnk)%psdry(J)
 
                 ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
                 ! hplin 12/21/2020
@@ -337,6 +484,7 @@ contains
                 if(ExtState%WLI%DoUse) then
                     ! assume land
                     State_CAM_LWI(I) = 1
+
                     if(cam_in(lchnk)%iceFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%ocnFrac(J))) then
                         State_CAM_LWI(I) = 2
                     endif
@@ -390,6 +538,9 @@ contains
 
         ! HEMCO output container state
         USE HCOX_State_Mod, only: ExtDat_Set
+
+        ! Vertical grid specification
+        use HCO_ESMF_Grid,  only: Ap, Bp, AREA_M2
 !
 ! !INPUT PARAMETERS:
 !
@@ -408,6 +559,7 @@ contains
 ! !REVISION HISTORY:
 !  16 Dec 2020 - H.P. Lin    - Initial version
 !  21 Dec 2020 - H.P. Lin    - Now also sets ExtState fields appropriately
+!  04 Feb 2021 - H.P. Lin    - Also compute air quantities (might have to move to separate later)
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -419,7 +571,8 @@ contains
 
         logical, save                :: FIRST = .true.
 
-        integer                      :: I, J                 ! Loop index
+        integer                      :: I, J, L              ! Loop index
+        real(r8), parameter          :: G0_100 = 100.e+0_r8 / 9.80665e+0_r8
 
         ! Assume success
         RC = ESMF_SUCCESS
@@ -428,12 +581,36 @@ contains
             write(iulog,*) "> CAM_RegridSet_HCOI entering"
         endif
 
+        !-----------------------------------------------------------------------
         ! Regrid necessary physics quantities from the CAM grid to the HEMCO grid
         ! Phase 1: Regrid
-        call HCO_Grid_CAM2HCO_2D(State_CAM_ps,     State_HCO_PSFC  )
-        call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH  )
-        call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK    )
+        !-----------------------------------------------------------------------
+        call HCO_Grid_CAM2HCO_2D(State_CAM_ps,     State_HCO_PSFC   )
+        call HCO_Grid_CAM2HCO_2D(State_CAM_psdry,  State_GC_PSC2_DRY)
+        call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH   )
+        call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK     )
 
+
+        !-----------------------------------------------------------------------
+        ! Compute air quantities (hplin, 2/4/21)
+        !-----------------------------------------------------------------------
+
+        ! Unified loop 1
+        do L = 1, LM
+        do J = 1, my_JM
+        do I = 1, my_IM
+            ! Calculate DELP_DRY (from pressure_mod)
+            State_GC_DELP_DRY(I,J,L) = Ap(L)   + (Bp(L)   * State_GC_PSC2_DRY(I,J)) - &
+                                       Ap(L+1) + (Bp(L+1) * State_GC_PSC2_DRY(I,J))
+
+            ! Calculate AD (AIR mass)
+            ! Note that AREA_M2 are GLOBAL indices so you need to perform offsetting!!
+            State_HCO_AIR(I,J,L) = State_GC_DELP_DRY(I,J,L) * G0_100 * AREA_M2(my_IS+I-1,my_JS+J-1)
+        enddo
+        enddo
+        enddo
+
+        !-----------------------------------------------------------------------
         ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
         ! hplin 12/21/2020
         if(ExtState%T2M%DoUse .or. ExtState%TSKIN%DoUse) then
@@ -463,12 +640,34 @@ contains
                             RC,       FIRST,          State_HCO_V10M)
         endif
 
+        ! Cos of Zenith Angle [1]
+        if(ExtState%SUNCOS%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_CSZA, State_HCO_CSZA)
+
+            call ExtDat_Set(HcoState, ExtState%SUNCOS,'SUNCOS_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_CSZA)
+        endif
+
         ! Visible surface albedo [1]
         if(ExtState%ALBD%DoUse) then
             call HCO_Grid_CAM2HCO_2D(State_CAM_ALBD, State_HCO_ALBD)
 
             call ExtDat_Set(HcoState, ExtState%ALBD,  'ALBD_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_ALBD)
+        endif
+
+        ! Air mass [kg]
+        if(ExtState%AIR%DoUse) then
+            call ExtDat_Set(HcoState, ExtState%AIR,   'AIRMASS_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_AIR)
+        endif
+
+        ! Constituents [MMR]
+        if(ExtState%O3%DoUse) then 
+            call HCO_Grid_CAM2HCO_3D(State_CAM_chmO3, State_HCO_chmO3)
+
+            call ExtDat_Set(HcoState, ExtState%O3,   'HEMCO_O3_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_chmO3)
         endif
 
         ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)

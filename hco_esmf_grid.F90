@@ -412,6 +412,7 @@ contains
             write( iulog, '(a)' )
             write( iulog, '(''%%%%%%%%%%%%%%% HEMCO GRID %%%%%%%%%%%%%%%'')' )
             write( iulog, '(a)' )
+            write( iulog, *) 'DX', DX, 'DY', DY
             write( iulog, '(''Grid box longitude centers [degrees]: '')' )
             write( iulog, * ) size(XMid, 1), size(XMid, 2)
             write( iulog, '(8(f8.3,1x))' ) ( XMid(I,1), I=1,IM )
@@ -945,7 +946,7 @@ contains
         use phys_control,       only: phys_getopts
         use phys_grid,          only: get_ncols_p, get_gcol_p, get_rlon_all_p, get_rlat_all_p
         use ppgrid,             only: begchunk, endchunk
-        use ppgrid,             only: pcols                        ! # of col chunks
+        use ppgrid,             only: pcols                        ! # of col max in chunks
 
         ! ESMF
         use ESMF,               only: ESMF_DistGridCreate, ESMF_MeshCreate
