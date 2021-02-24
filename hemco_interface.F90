@@ -36,9 +36,9 @@ module hemco_interface
     use cam_logfile,              only: iulog       ! output log handle
 
     ! Species information 
-    use chem_mods,                only: gas_pcnst   ! # of species
-    use chem_mods,                only: adv_mass    ! advected mass
-    use mo_tracname,              only: solsym      ! species names
+    use constituents,             only: pcnst       ! # of species
+    use constituents,             only: cnst_name   ! species names
+    use constituents,             only: cnst_mw     ! advected mass
     use mo_chem_utls,             only: get_spc_ndx ! IND_
 
     ! Check chemistry option
@@ -348,11 +348,11 @@ contains
         call ESMF_GridCompInitialize(HCO_GridComp, importState=HCO_GridCompState, exportState=HCO_GridCompState, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> Initialized ESMF environment successfully! localPET, PETcount", localPET, PETcount
-            write(iulog,*) "> iam, npes", iam, npes
-            write(iulog,*) "> PETlist", PETlist
-        endif
+        !if(masterproc) then
+        !    write(iulog,*) "> Initialized ESMF environment successfully! localPET, PETcount", localPET, PETcount
+        !    write(iulog,*) "> iam, npes", iam, npes
+        !    write(iulog,*) "> PETlist", PETlist
+        !endif
 
         !-----------------------------------------------------------------------
         ! Setup a lat-lon "HEMCO" intermediate grid
@@ -368,10 +368,10 @@ contains
         call HCO_Grid_Init (IM_in = 360, JM_in = 181, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
-            write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
-        endif
+        !if(masterproc) then
+        !    write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
+        !    write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
+        !endif
 
         !-----------------------------------------------------------------------
         ! Update HEMCO regrid descriptors for the first time.
@@ -424,12 +424,10 @@ contains
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
         !-----------------------------------------------------------------------
-        if(masterproc) write(iulog,*) "> Initializing HCO configuration object"
+        !if(masterproc) write(iulog,*) "> Initializing HCO configuration object"
 
-        ! We are using gas_pcnst here, which is # of "gas phase" species.
-        ! This might be changed down the line but we are reading chem_mods
-        ! for now.
-        nHcoSpc             = gas_pcnst          ! # of hco species? using gas
+        ! We are using pcnst here, which is # of constituents.
+        nHcoSpc             = pcnst          ! # of hco species?
 
         call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc)
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -450,12 +448,12 @@ contains
         HcoConfig%nModelSpc = nHcoSpc
         HcoConfig%nModelAdv = nHcoSpc            ! # of adv spc?
 
-        if(masterproc) write(iulog,*) "> Initializing HCO species list!"
+        !if(masterproc) write(iulog,*) "> Initializing HCO species list!"
 
         do N = 1, nHcoSpc
             HcoConfig%ModelSpc(N)%ModID   = N ! model id
 
-            HcoConfig%ModelSpc(N)%SpcName = trim(solsym(N))
+            HcoConfig%ModelSpc(N)%SpcName = trim(cnst_name(N))
 
             !----------------------------------------------
             ! Register export properties.
@@ -469,9 +467,9 @@ contains
             call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
                         trim(exportDesc),                               &
                         gridname='physgrid')
-            ! call add_default(exportName, 2, 'I') ! On by default
+             call add_default(exportName, 3, ' ') ! On by default
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! Physics buffer
             ! Note that _AddField will prepend HCO_, so do not add it here
@@ -481,7 +479,7 @@ contains
         !-----------------------------------------------------------------------
         ! Read HEMCO configuration file from HcoConfigFile (location in CAM namelist)
         !-----------------------------------------------------------------------
-        if(masterproc) write(iulog,*) "> Reading HEMCO configuration file..."
+        !if(masterproc) write(iulog,*) "> Reading HEMCO configuration file..."
 
         ! FIXME: Not implementing "Dry-run" functionality in HEMCO_CESM. (hplin, 3/27/20)
         ! Phase: 0 = all, 1 = sett and switches only, 2 = fields only
@@ -497,7 +495,7 @@ contains
         call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "> Read HEMCO configuration file OK!"
+        !if(masterproc) write(iulog,*) "> Read HEMCO configuration file OK!"
 
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO state object
@@ -505,7 +503,7 @@ contains
         call HcoState_Init(HcoState, HcoConfig, nHcoSpc, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "> Initialize HEMCO state obj OK!"
+        !if(masterproc) write(iulog,*) "> Initialize HEMCO state obj OK!"
 
         ! Emissions, chemistry and dynamics timestep [s]
         ! Assume 0.5h until given actual time in HCO_GC_Run!
@@ -525,15 +523,15 @@ contains
         ! Don't support DryRun option (for now)
         HcoState%Options%IsDryRun = .false.
 
-        if(masterproc) write(iulog,*) "> Set basic HEMCO state obj OK!"
+        !if(masterproc) write(iulog,*) "> Set basic HEMCO state obj OK!"
 
         !-----------------------------------------------------------------------
         ! Register HEMCO species information (HEMCO state object)
         !-----------------------------------------------------------------------
         do N = 1, nHcoSpc
             HcoState%Spc(N)%ModID         = N               ! model id
-            HcoState%Spc(N)%SpcName       = trim(solsym(N)) ! species name
-            HcoState%Spc(N)%MW_g          = adv_mass(N)     ! mol. weight [g/mol]
+            HcoState%Spc(N)%SpcName       = trim(cnst_name(N)) ! species name
+            HcoState%Spc(N)%MW_g          = cnst_mw(N)     ! mol. weight [g/mol]
 
             ! !!! We don't set Henry's law coefficients in HEMCO_CESM !!!
             ! they are mostly used in HCOX_SeaFlux_Mod, but HCOX are unsupported (for now)
@@ -598,12 +596,12 @@ contains
 
             ! Write to log too
             if(masterproc) then
-                write(iulog,*) ">> Spc", N, " = ", solsym(N), "MW_g", adv_mass(N)
+                !write(iulog,*) ">> Spc", N, " = ", cnst_name(N), "MW_g", cnst_mw(N)
                 call HCO_Spec2Log(HcoState, N)
             endif
         enddo
 
-        if(masterproc) write(iulog,*) "> Set HEMCO species info OK!"
+        !if(masterproc) write(iulog,*) "> Set HEMCO species info OK!"
 
         !-----------------------------------------------------------------------
         ! Register HEMCO Grid information
@@ -645,7 +643,7 @@ contains
         !                                               HcoState%Grid%YMid%Val(1,1), &
         !                                               HcoState%Grid%Area_m2%Val(1,1)
 
-        if(masterproc) write(iulog,*) "> Set HEMCO PET-local grid info OK!"
+        !if(masterproc) write(iulog,*) "> Set HEMCO PET-local grid info OK!"
 
         !-----------------------------------------------------------------------
         ! Initialize HEMCO!
@@ -653,7 +651,7 @@ contains
         call HCO_Init(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
+        !if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
 
         !-----------------------------------------------------------------------
         ! Initialize HEMCO Extensions!
@@ -661,7 +659,7 @@ contains
         call HCOX_Init(HcoState, ExtState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
+        !if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
 
         !-----------------------------------------------------------------------
         ! Additional exports: Verify if we need to add additional exports
@@ -686,7 +684,7 @@ contains
                 ! Also pbuf
                 call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
                 
-                if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+                !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
                 ! XLAIxx
                 write(exportNameTmp, '(a,i2.2)') 'XLAI', N
@@ -703,7 +701,7 @@ contains
                 ! Also pbuf
                 call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-                if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+                !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
             enddo
 
             ! UVALBEDO
@@ -721,7 +719,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! SURF_IODIDE
             write(exportnameTmp, '(a)') 'iodide'
@@ -738,7 +736,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! SURF_SALINITY
             write(exportnameTmp, '(a)') 'salinity'
@@ -755,7 +753,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! OMOC_DJF
             write(exportnameTmp, '(a)') 'OMOC_DJF'
@@ -772,7 +770,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! OMOC_MAM
             write(exportnameTmp, '(a)') 'OMOC_MAM'
@@ -789,7 +787,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! OMOC_JJA
             write(exportnameTmp, '(a)') 'OMOC_JJA'
@@ -806,7 +804,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! OMOC_SON
             write(exportnameTmp, '(a)') 'OMOC_SON'
@@ -823,7 +821,7 @@ contains
             ! Also pbuf
             call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
 
-            if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
+            !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
 
             if(masterproc) then
@@ -1191,10 +1189,10 @@ contains
         ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us. oh well
 
-        if(masterproc) then
-            write(6,*) "HEMCO_CAM: Updating HEMCO clock to set", year, month, day, hour, minute, second
-            write(6,*) "HEMCO_CAM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
-        endif
+        !if(masterproc) then
+        !    write(6,*) "HEMCO_CAM: Updating HEMCO clock to set", year, month, day, hour, minute, second
+        !    write(6,*) "HEMCO_CAM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
+        !endif
 
         call HCOClock_Set(HcoState, year, month, day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
