@@ -50,6 +50,7 @@ module hemco_interface
 
     ! Time
     use time_manager,             only: get_curr_time, get_prev_time, get_curr_date
+    use time_manager,             only: get_step_size
 
     ! ESMF types
     use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
@@ -104,6 +105,9 @@ module hemco_interface
 !  ever since.
 !
 !  All I hope for 2021, is that the world does not pull a "You can now play as Luigi" on me.
+!
+!  Updated 2/24/21 from T. Fritz: Now uses constituents list, since short-term species are
+!  not emitted. See PR: https://github.com/jimmielin/HEMCO_CESM/pull/5
 !
 ! !REVISION HISTORY:
 !  29 Jan 2020 - H.P. Lin    - Initial version
@@ -232,7 +236,7 @@ contains
         use cam_instance,     only: inst_index, inst_name
 
         ! CAM history output (to be moved somewhere later)
-        use cam_history,      only: addfld, add_default
+        use cam_history,      only: addfld, add_default, horiz_only
 
         ! HEMCO Initialization
         use HCO_Config_Mod,   only: Config_ReadFile, ConfigInit
@@ -290,6 +294,7 @@ contains
         integer                      :: year, month, day, tod
         integer                      :: hour, minute, second, dt
         integer                      :: prev_day, prev_s, now_day, now_s
+        integer                      :: stepsize_tmp
 
         !-----------------------------------------------------------------------
 
@@ -507,9 +512,13 @@ contains
 
         ! Emissions, chemistry and dynamics timestep [s]
         ! Assume 0.5h until given actual time in HCO_GC_Run!
-        HcoState%TS_EMIS = 1800.0
-        HcoState%TS_CHEM = 1800.0
-        HcoState%TS_DYN  = 1800.0
+
+        stepsize_tmp = get_step_size()
+        if(masterproc) write(iulog,*) "> HEMCO_CESM: Step size is ", stepsize_tmp
+
+        HcoState%TS_EMIS = stepsize_tmp * 1.0
+        HcoState%TS_CHEM = stepsize_tmp * 1.0
+        HcoState%TS_DYN  = stepsize_tmp * 1.0
 
         ! Not a MAPL simulation. isESMF is deceiving.
         HcoState%Options%isESMF = .false.
@@ -674,15 +683,13 @@ contains
                 exportName = 'HCO_' // trim(exportNameTmp)
                 exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-                ! Too lazy to write an Export_CAM2D
-                call addfld(exportName, (/'lev'/), 'I', '1',                &
+                call addfld(exportName, horiz_only, 'I', '1',                &
                             trim(exportDesc),                               &
                             gridname='physgrid')
                 ! call add_default(exportName, 2, 'I') ! On by default
 
                 ! Also pbuf
-                call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+                call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
                 
                 !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -691,15 +698,13 @@ contains
                 exportName = 'HCO_' // trim(exportNameTmp)
                 exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-                ! Too lazy to write an Export_CAM2D
-                call addfld(exportName, (/'lev'/), 'I', '1',                &
+                call addfld(exportName, horiz_only, 'I', '1',                &
                             trim(exportDesc),                               &
                             gridname='physgrid')
                 ! call add_default(exportName, 2, 'I') ! On by default
 
                 ! Also pbuf
-                call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+                call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
                 !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
             enddo
@@ -709,15 +714,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', '1',                &
+            call addfld(exportName, horiz_only, 'I', '1',                &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -726,15 +729,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'nM',               &
+            call addfld(exportName, horiz_only, 'I', 'nM',               &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -743,15 +744,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+            call addfld(exportName, horiz_only, 'I', 'PSU',              &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -760,15 +759,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+            call addfld(exportName, horiz_only, 'I', 'PSU',              &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -777,15 +774,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+            call addfld(exportName, horiz_only, 'I', 'PSU',              &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -794,15 +789,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+            call addfld(exportName, horiz_only, 'I', 'PSU',              &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -811,15 +804,13 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            call addfld(exportName, (/'lev'/), 'I', 'PSU',              &
+            call addfld(exportName, horiz_only, 'I', 'PSU',              &
                         trim(exportDesc),                               &
                         gridname='physgrid')
             ! call add_default(exportName, 2, 'I') ! On by default
 
             ! Also pbuf
-            call HCO_Export_Pbuf_AddField(exportNameTmp, 3)
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -1093,6 +1084,10 @@ contains
         real(ESMF_KIND_R8)                    :: exportFldHco(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: exportFldCAM(1:LM, 1:my_CE)
 
+        ! Temporaries used for export (2-D data)
+        real(ESMF_KIND_R8)                    :: exportFldHco2(my_IS:my_IE, my_JS:my_JE)
+        real(ESMF_KIND_R8)                    :: exportFldCAM2(1:my_CE)
+
         ! For debug dummies
         real(ESMF_KIND_R8)                    :: dummy_0_CAM(1:LM, 1:my_CE)
         real(ESMF_KIND_R8)                    :: dummy_1(my_IS:my_IE, my_JS:my_JE, 1:LM)
@@ -1155,6 +1150,10 @@ contains
 
         ! Check if we have run HEMCO for this time step already. If yes can exit
         if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
+            ! But also do not skip the first time step
+            ! FIXME: Implicit assumption of time stepping size being 1800.0
+            ! FIXME hplin 2/28/21
+
             if(masterproc) then
                 write(iulog,*) "HEMCO_CAM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
             endif
@@ -1167,7 +1166,14 @@ contains
             HcoState%TS_EMIS = (now_day - prev_day) * 86400.0 + now_s - prev_s
             HcoState%TS_CHEM = (now_day - prev_day) * 86400.0 + now_s - prev_s
             HcoState%TS_DYN  = (now_day - prev_day) * 86400.0 + now_s - prev_s
-            if(masterproc) write(iulog,*) "HEMCO_CAM: Updated HEMCO timestep to ", HcoState%TS_CHEM
+
+            ! temp test - will be reset later
+            hour = get_step_size()
+
+            if(masterproc) then
+                write(iulog,*) "HEMCO_CAM: Updated HEMCO timestep to ", HcoState%TS_CHEM
+                write(iulog,*) "hplin debug - step size retrieved is ", hour
+            endif
         endif
 
         ! Compute hour, minute, second (borrowed from tfritz)
@@ -1401,198 +1407,170 @@ contains
                 write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
                 exportName = 'HCO_' // trim(exportNameTmp)
 
-                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-                ! Too lazy to write an Export_CAM2D
-                exportFldHco(:,:,:) = 0.0_r8
-                exportFldCAM(:,:)   = 0.0_r8
+                exportFldCAM2(:)   = 0.0_r8
 
                 ! Grab the pointer if available
                 call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
                 doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
                 if(HMRC == HCO_SUCCESS .and. FND) then
-                    exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                    exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
                 endif
-                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+
                 if(doExport) then
-                    call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                    call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                    call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
 
                 ! XLAIxx
                 write(exportNameTmp, '(a,i2.2)') 'XLAI', N
                 exportName = 'HCO_' // trim(exportNameTmp)
 
-                ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-                ! Too lazy to write an Export_CAM2D
-                exportFldHco(:,:,:) = 0.0_r8
-                exportFldCAM(:,:)   = 0.0_r8
+                exportFldCAM2(:)   = 0.0_r8
 
                 ! Grab the pointer if available
                 call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
                 doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
                 if(HMRC == HCO_SUCCESS .and. FND) then
-                    exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                    exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
                 endif
-                call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+
                 if(doExport) then
-                    call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                    call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                    call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
             enddo
 
             ! UVALBEDO
+            ! Warning: Keep these exportNameTmp as it allows for reuse of
+            ! code below. (hplin, 2/28/21)
             write(exportNameTmp, '(a)') 'UV_ALBEDO'
+
+            ! Reusable code templating below.
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! SURF_SALINITY
-            write(exportNameTmp, '(a)') 'surf_salinity'
+            ! Note: the name is too long, reduce to HCO_salinity, HCO_iodide
+            write(exportNameTmp, '(a)') 'salinity'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            call HCO_GetPtr(HcoState, 'surf_salinity', Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
-                ! This is required as the physics buffer cannot store
-                ! `HCO_surf_salinity` as it is too long.. We thus export as
-                ! `HCO_salinity`
-                write(exportNameTmp, '(a)') 'salinity'
-                exportName = 'HCO_' // trim(exportNameTmp)
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! SURF_IODIDE
-            write(exportNameTmp, '(a)') 'surf_iodide'
+            write(exportNameTmp, '(a)') 'iodide'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
-            call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+            call HCO_GetPtr(HcoState, 'surf_iodide', Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
-                ! See above comment about `HCO_surf_salinity`
-                write(exportNameTmp, '(a)') 'iodide'
-                exportName = 'HCO_' // trim(exportNameTmp)
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! OMOC_DJF
             write(exportNameTmp, '(a)') 'OMOC_DJF'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! OMOC_MAM
             write(exportNameTmp, '(a)') 'OMOC_MAM'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! OMOC_JJA
             write(exportNameTmp, '(a)') 'OMOC_JJA'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
             ! OMOC_SON
             write(exportNameTmp, '(a)') 'OMOC_SON'
             exportName = 'HCO_' // trim(exportNameTmp)
 
-            ! FIXME (hplin): Exporting as 3-D; third dimension unused, change later...
-            ! Too lazy to write an Export_CAM2D
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
+            ! Reset data for safe export at first time step
+            exportFldCAM2(:) = 0.0_r8
 
-            ! Grab the pointer if available
             call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco(:,:,1) = Ptr2D ! Copy data in
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
             if(doExport) then
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
-                call HCO_Export_Pbuf_CAM3D(exportNameTmp, -1, exportFldCAM)
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             
             if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"

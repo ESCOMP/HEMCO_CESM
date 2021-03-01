@@ -50,10 +50,13 @@ module hco_cam_exports
 !
     public    :: HCO_Exports_Init
     public    :: HCO_Export_History_HCO3D
+    public    :: HCO_Export_History_CAM2D
     public    :: HCO_Export_History_CAM3D
 
+    public    :: HCO_Export_Pbuf_QueryField
     public    :: HCO_Export_Pbuf_AddField
     public    :: HCO_Export_Pbuf_CAM3D
+    public    :: HCO_Export_Pbuf_CAM2D
 !
 ! !REMARKS:
 !  This module should NOT be aware of particular chemical constituents. It should
@@ -78,6 +81,7 @@ module hco_cam_exports
 ! !REVISION HISTORY:
 !  25 Feb 2020 - H.P. Lin    - Initial version
 !  10 Apr 2020 - H.P. Lin    - Added pbuf functionality
+!  25 Feb 2021 - H.P. Lin    - Added pbuf 2-D export and query functionality
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -360,6 +364,152 @@ contains
 !------------------------------------------------------------------------------
 !BOP
 !
+! !IROUTINE: HCO_Export_History_CAM2D
+!
+! !DESCRIPTION: Writes to CAM history a 2-D field in the CAM array format. This
+!  uses the CAM physics mesh (physgrid).
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Export_History_CAM2D(fldname, array)
+!
+! !USES:
+!
+        use cam_history,              only: hist_fld_active, outfld
+        use ppgrid,                   only: pcols
+        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+
+        use spmd_utils,               only: iam, masterproc
+!
+! !INPUT PARAMETERS:
+!
+        character(len=*), intent(in) :: fldname               ! Field name
+        real(r8),         intent(in) :: array(1:my_CE)
+!
+! !REMARKS:
+!  Remember fields need to be declared via addfld in CAM before history export.
+!  Refer to the 3-D field export subroutine for further documentation.
+!
+! !REVISION HISTORY:
+!  26 Feb 2021 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCO_Export_History_CAM2D'
+        integer                      :: lchnk, ncol
+        integer                      :: I, J
+
+        real(r8)                     :: tmpfld_i(pcols)   ! Temporary array for per-column data (i, k)
+
+        if(.not. hist_fld_active(trim(fldname))) then
+            ! This routine is ALWAYS called but may fail silently if this history field
+            ! is not to be outputted.
+            ! if(masterproc) write(iulog,*) "HCO_Export_History_CAM2D: Cannot export", trim(fldname), " (not active)"
+            return
+        endif
+
+        ! For all chunks on this PET
+        J = 0
+        do lchnk = begchunk, endchunk
+            ncol = get_ncols_p(lchnk)
+            ! For all columns in each chunk, organize the data
+            do I = 1, ncol
+                J = J + 1   ! Advance one column in the physics mesh array
+                tmpfld_i(I) = array(J)
+            enddo
+
+            ! Write to outfld chunk by chunk
+            ! write(6,*) "hco_cam_exports before writing ncol, lchnk, ", ncol, lchnk
+            call outfld(trim(fldname), tmpfld_i(:ncol), ncol, lchnk)
+            ! write(6,*) "hco_cam_exports writing ncol, lchnk, ", ncol, lchnk
+        enddo
+
+    end subroutine HCO_Export_History_CAM2D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Export_Pbuf_QueryField
+!
+! !DESCRIPTION: Query the physics buffer for whether a field exists
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Export_Pbuf_QueryField(fldname, dims, result, hcoID)
+!
+! !USES:
+!
+        use ppgrid,                   only: pcols, pver
+        use physics_buffer,           only: pbuf_get_index
+
+        use spmd_utils,               only: iam, masterproc
+!
+! !INPUT PARAMETERS:
+!
+        character(len=*), intent(in) :: fldname               ! Field name
+        integer, intent(in)          :: dims                  ! 2 or 3 dimensions data?
+        integer, intent(in), optional:: hcoID                 ! Species ID
+
+        logical, intent(out)         :: result                ! Is field present?
+!
+! !REMARKS:
+!  Persistence is 'physpkg' for now, which means the fields are alloc/dealloc at
+!  the beginning/end of each physics time step.
+!
+!  It may be necessary to allocate some fields for 'global' to pass data from
+!  chemistry back
+!
+! !REVISION HISTORY:
+!  25 Feb 2021 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCO_Export_Pbuf_QueryField'
+        character(len=255)           :: fldname_ns
+
+        integer                      :: spcID, tmpIdx
+        integer                      :: RC
+
+        ! Create field name and verify IDs
+        fldname_ns = 'HCO_' // trim(fldname)
+        if(present(hcoID)) then
+            spcID = hcoID
+        else
+            spcID = -1
+        endif
+
+        ! Not found by default
+        result = .false.
+
+        ! Verify if slot occupied
+        if(spcID /= -1) then
+            if(pbuf_idx_map(spcID) /= -233) then
+                result = .true.
+            endif
+        else
+            tmpIdx = pbuf_get_index(fldname_ns, RC)
+            if(tmpIdx >= 0) then
+                result = .true.
+            endif
+        endif
+
+    end subroutine HCO_Export_Pbuf_QueryField
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
 ! !IROUTINE: HCO_Export_Pbuf_AddField
 !
 ! !DESCRIPTION: Adds to the physics buffer a HEMCO field for export to the chem-
@@ -548,5 +698,105 @@ contains
             nullify(pbuf_ik)
         enddo
     end subroutine HCO_Export_Pbuf_CAM3D
+!EOC
+!------------------------------------------------------------------------------
+!                    Harmonized Emissions Component (HEMCO)                   !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: HCO_Export_Pbuf_CAM2D
+!
+! !DESCRIPTION: Adds to the physics buffer a HEMCO field for export to the chem-
+!  istry. We wrap this here so we can control the persistence and add a prefix.
+!\\
+!\\
+! !INTERFACE:
+!
+    subroutine HCO_Export_Pbuf_CAM2D(fldname, hcoID, array)
+!
+! !USES:
+!
+        use ppgrid,                   only: pcols, pver
+        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
+
+        use spmd_utils,               only: iam, masterproc
+!
+! !INPUT PARAMETERS:
+!
+        character(len=*), intent(in) :: fldname               ! Field name
+        integer, intent(in), optional:: hcoID                 ! Species ID
+        real(r8),         intent(in) :: array(1:my_CE)
+!
+! !REMARKS:
+!  Read remarks at the CAM3D subroutine. This is the 2-D version (1-D in CAM speak)
+!
+! !REVISION HISTORY:
+!  25 Feb 2021 - H.P. Lin    - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+        character(len=*), parameter  :: subname = 'HCO_Export_Pbuf_CAM2D'
+        character(len=255)           :: fldname_ns
+
+        integer                      :: spcID, tmpIdx
+
+        integer                      :: lchnk, ncol
+        integer                      :: I, J
+        integer                      :: RC
+        type(physics_buffer_desc), pointer :: pbuf_chnk(:)       ! slice of pbuf in chnk
+        real(r8), pointer            :: pbuf_i(:)     ! Pointer to pbuf data (/pcols/)
+
+        ! Create field name and verify IDs
+        fldname_ns = 'HCO_' // trim(fldname)
+        if(present(hcoID)) then
+            spcID = hcoID
+        else
+            spcID = -1
+        endif
+
+        ! Verify if slot occupied
+        if(spcID /= -1) then
+            if(pbuf_idx_map(spcID) == -233) then
+                if(masterproc) write(iulog,*) "HCO_Export_Pbuf_CAM2D: Field not found", spcID, fldname_ns
+                return 
+            endif
+            tmpIdx = pbuf_idx_map(spcID)
+        else
+            tmpIdx = pbuf_get_index(fldname_ns, RC)
+            if(tmpIdx < 0) then
+                if(masterproc) write(iulog,*) "HCO_Export_Pbuf_CAM2D: Field not found", spcID, fldname_ns
+                return
+            endif
+        endif
+
+        ! For all chunks on this PET
+        J = 0
+        do lchnk = begchunk, endchunk
+            ncol = get_ncols_p(lchnk)
+            pbuf_chnk => pbuf_get_chunk(hco_pbuf2d, lchnk)       ! slice of pbuf for this chnk
+
+            ! Get this pointer from pbuf
+            call pbuf_get_field(pbuf_chnk, tmpIdx, pbuf_i)
+
+            if(.not. associated(pbuf_i)) then
+                ! Uh-oh, potentially fatal. Throw a tantrum
+                write(6,*) "HCO_Export_Pbuf_CAM2D: FATAL at lchnk", lchnk, " unassoc pbuf_get_field" // trim(fldname_ns) // " idx:", tmpIdx
+                ASSERT_(.false.)
+            endif
+
+            ! For all columns in each chunk, organize the data
+            do I = 1, ncol
+                J = J + 1   ! Advance one column in the physics mesh array
+                pbuf_i(I) = array(J)
+            enddo
+
+            ! Nullify the field to prevent dangling stuff
+            nullify(pbuf_i)
+        enddo
+    end subroutine HCO_Export_Pbuf_CAM2D
 !EOC
 end module hco_cam_exports
