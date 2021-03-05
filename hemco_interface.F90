@@ -439,7 +439,7 @@ contains
 
         HcoConfig%amIRoot   = masterproc
         
-        !HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
+        ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
        
 
         HcoConfig%MetField  = 'MERRA2'
@@ -1203,26 +1203,6 @@ contains
         call HCOClock_Set(HcoState, year, month, day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
-        
-        !-----------------------------------------------------------------------
-        ! Regrid necessary meteorological quantities
-        !-----------------------------------------------------------------------
-        call CAM_RegridSet_HCOI(HcoState, ExtState)
-
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO"
-
-            ! As a test... maybe we also need to flip in the vertical
-            ! write(iulog,*) State_HCO_TK(1,1,:)
-            ! write(iulog,*) "PSFC(1:2,:)"
-            ! write(iulog,*) State_HCO_PSFC(1:2,:) 
-
-            !write(iulog,*) "cam state%ps dump"
-            !write(iulog,*) State_CAM_ps
-
-            ! TK: 288 283 277 271 266 261 ... 250 251 252
-            ! Seems like the vertical is OK for now
-        endif
 
         !-----------------------------------------------------------------------
         ! Continue setting up HEMCO
@@ -1231,6 +1211,17 @@ contains
         ! Reset all emission and deposition values.
         call HCO_FluxArrReset(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
+        
+        !-----------------------------------------------------------------------
+        ! Regrid necessary meteorological quantities (Phase 1)
+        ! Computes the absolute minimum (PSFC and TK) necessary for HEMCO
+        ! to define its grid.
+        !-----------------------------------------------------------------------
+        call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=1)
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (1)"
+        endif
 
         !-----------------------------------------------------------------------
         ! Get grid properties
@@ -1253,6 +1244,28 @@ contains
                          DefVal=1000.0_hp, & ! default value
                          RC=HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
+        
+        !-----------------------------------------------------------------------
+        ! Regrid necessary meteorological quantities (Phase 2)
+        ! Has to be below grid properties because vertical grid needs to be defined
+        ! for quantities to be computed!
+        !-----------------------------------------------------------------------
+        call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=2)
+
+        if(masterproc) then
+            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (2)"
+
+            ! As a test... maybe we also need to flip in the vertical
+            ! write(iulog,*) State_HCO_TK(1,1,:)
+            ! write(iulog,*) "PSFC(1:2,:)"
+            ! write(iulog,*) State_HCO_PSFC(1:2,:) 
+
+            !write(iulog,*) "cam state%ps dump"
+            !write(iulog,*) State_CAM_ps
+
+            ! TK: 288 283 277 271 266 261 ... 250 251 252
+            ! Seems like the vertical is OK for now
+        endif
 
         !-----------------------------------------------------------------------
         ! Set HEMCO options
