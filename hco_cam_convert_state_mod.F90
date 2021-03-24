@@ -609,6 +609,9 @@ contains
 
         ! Vertical grid specification
         use HCO_ESMF_Grid,  only: Ap, Bp, AREA_M2
+
+        ! HEMCO utilities
+        use HCO_GeoTools_Mod, only: HCO_GetSUNCOS
 !
 ! !INPUT PARAMETERS:
 !
@@ -730,7 +733,10 @@ contains
 
         ! Cos of Zenith Angle [1]
         if(ExtState%SUNCOS%DoUse) then
-            call HCO_Grid_CAM2HCO_2D(State_CAM_CSZA, State_HCO_CSZA)
+            ! call HCO_Grid_CAM2HCO_2D(State_CAM_CSZA, State_HCO_CSZA)
+
+            ! Use native CSZA from HEMCO for consistency?
+            call HCO_GetSUNCOS(HcoState, State_HCO_CSZA, 0, RC)
 
             call ExtDat_Set(HcoState, ExtState%SUNCOS,'SUNCOS_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_CSZA)
