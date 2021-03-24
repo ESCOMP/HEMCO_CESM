@@ -260,6 +260,7 @@ contains
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
 !  15 Dec 2020 - H.P. Lin    - Implement HEMCO extensions that do require met
+!  23 Mar 2021 - H.P. Lin    - Now export for diagnostics too
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -301,7 +302,7 @@ contains
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
-            write(iulog,*) "HEMCO_CAM interface version 0.2"
+            write(iulog,*) "HEMCO_CAM interface version 0.3"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -440,7 +441,6 @@ contains
         HcoConfig%amIRoot   = masterproc
         
         ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
-       
 
         HcoConfig%MetField  = 'MERRA2'
         HcoConfig%GridRes   = ''
@@ -671,6 +671,34 @@ contains
         !if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
 
         !-----------------------------------------------------------------------
+        ! Additional exports: Verify if additional diagnostic quantities
+        ! for HEMCO extensions need to be provisioned.
+        ! (hplin, 3/21/21)
+        !-----------------------------------------------------------------------
+        ! ParaNOx: Ship NO emissions
+        ! Due to the length limit this is a non-standard name, the HEMCO names are
+        ! PARANOX_O3_DEPOSITION_FLUX and PARANOX_HNO3_DEPOSITION_FLUX
+        if(ExtState%ParaNOx > 0) then
+            write(exportnameTmp, '(a)') 'PAR_O3_DEP'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Deposition Flux Name " // trim(exportNameTmp)
+
+            call addfld(exportName, horiz_only, 'I', '1',                &
+                        trim(exportDesc),                                &
+                        gridname='physgrid')
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
+
+            write(exportnameTmp, '(a)') 'PAR_HNO3_DEP'
+            exportName = 'HCO_' // trim(exportNameTmp)
+            exportDesc = "HEMCO Deposition Flux Name " // trim(exportNameTmp)
+
+            call addfld(exportName, horiz_only, 'I', '1',                &
+                        trim(exportDesc),                                &
+                        gridname='physgrid')
+            call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
+        endif
+
+        !-----------------------------------------------------------------------
         ! Additional exports: Verify if we need to add additional exports
         ! for integration with CESM-GC. (hplin, 4/15/20)
         !-----------------------------------------------------------------------
@@ -813,7 +841,6 @@ contains
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
-
 
             if(masterproc) then
                 write(iulog,*) "> HEMCO additional exports for CESM2-GC initialized!"
@@ -1408,10 +1435,71 @@ contains
 
         enddo
 
+        !-----------------------------------------------------------------------
+        ! Handle special diagnostics for some extensions
+        !-----------------------------------------------------------------------
 
+        ! Reset pointers first. Always do this beforehand
+        Ptr2D => NULL()
+
+        ! Eventually save necessary deposition FLUXES from extensions.
+        if(ExtState%ParaNOx > 0) then
+            ! PAR_O3_DEP, PAR_HNO3_DEP
+            exportName = 'HCO_PAR_O3_DEP'
+            exportNameTmp = 'PAR_O3_DEP'
+            call GetHcoDiagn(HcoState, ExtState, DiagnName='PARANOX_O3_DEPOSITION_FLUX', &
+                             StopIfNotFound=.false., Ptr2D=Ptr2D, RC=HMRC)
+
+            if(.not. associated(Ptr2D)) then
+                write(6,*) "hplin debug err: cannot find paranox o3 dep flux"
+            endif
+
+            exportFldHco2(:,:) = 0.0_r8
+            exportFldCAM2(:)   = 0.0_r8
+            doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. associated(Ptr2D)))
+            if(HMRC == HCO_SUCCESS .and. associated(Ptr2D)) then
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+            endif
+
+            if(doExport) then
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
+            endif
+            Ptr2D => NULL()
+
+            if(masterproc) write(iulog,*) "hplin debug: PARANOX_O3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
+
+            exportName = 'HCO_PAR_HNO3_DEP'
+            exportNameTmp = 'PAR_HNO3_DEP'
+            call GetHcoDiagn(HcoState, ExtState, DiagnName='PARANOX_HNO3_DEPOSITION_FLUX', &
+                             StopIfNotFound=.false., Ptr2D=Ptr2D, RC=HMRC)
+
+            exportFldHco2(:,:) = 0.0_r8
+            exportFldCAM2(:)   = 0.0_r8
+            doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. associated(Ptr2D)))
+            if(HMRC == HCO_SUCCESS .and. associated(Ptr2D)) then
+                exportFldHco2(:,:) = Ptr2D(:,:)
+                call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+            endif
+
+            if(doExport) then
+                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
+            endif
+            Ptr2D => NULL()
+
+            if(masterproc) write(iulog,*) "hplin debug: PARANOX_HNO3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
+
+            if(masterproc) write(iulog,*) "HEMCO_CESM: done with exports for ParaNOX extension"
+        endif
+
+        !-----------------------------------------------------------------------
         ! Do we need to do additional exports for CESM-GC?
+        !-----------------------------------------------------------------------
+        
         if(chem_is('GEOS-Chem')) then
-            if(masterproc) write(iulog,*) "HEMCO_CAM: starting exports to GEOS-Chem"
+            if(masterproc) write(iulog,*) "HEMCO_CESM: starting exports to GEOS-Chem"
             do N = 0, 72
                 ! Assume success
                 HMRC = HCO_SUCCESS
@@ -1434,6 +1522,7 @@ contains
                     call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                     call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
+                Ptr2D => NULL()
 
                 ! XLAIxx
                 write(exportNameTmp, '(a,i2.2)') 'XLAI', N
@@ -1453,7 +1542,10 @@ contains
                     call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                     call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
+                Ptr2D => NULL()
             enddo
+
+            if(masterproc) write(iulog,*) "HEMCO_CESM: after LANDTYPE/XLAI"
 
             ! UVALBEDO
             ! Warning: Keep these exportNameTmp as it allows for reuse of
@@ -1476,6 +1568,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! SURF_SALINITY
             ! Note: the name is too long, reduce to HCO_salinity, HCO_iodide
@@ -1495,6 +1588,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! SURF_IODIDE
             write(exportNameTmp, '(a)') 'iodide'
@@ -1513,6 +1607,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! OMOC_DJF
             write(exportNameTmp, '(a)') 'OMOC_DJF'
@@ -1531,6 +1626,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! OMOC_MAM
             write(exportNameTmp, '(a)') 'OMOC_MAM'
@@ -1549,6 +1645,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! OMOC_JJA
             write(exportNameTmp, '(a)') 'OMOC_JJA'
@@ -1567,6 +1664,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
 
             ! OMOC_SON
             write(exportNameTmp, '(a)') 'OMOC_SON'
@@ -1585,6 +1683,7 @@ contains
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
+            Ptr2D => NULL()
             
             if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
         endif
