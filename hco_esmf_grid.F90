@@ -1557,6 +1557,8 @@ contains
         character(len=*), parameter :: subname = 'HCO_Grid_HCO2CAM_3D'
         integer                     :: RC
         logical                     :: isDoRegrid
+        ! Fortran tip: Did you know that if you specify a default value for a local variable,
+        ! it is implicitly SAVEd? Gotcha!
 
         isDoRegrid = .true.
         if(present(doRegrid)) then

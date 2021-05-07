@@ -472,7 +472,7 @@ contains
             call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
                         trim(exportDesc),                               &
                         gridname='physgrid')
-             call add_default(exportName, 3, ' ') ! On by default
+            ! call add_default(exportName, 3, ' ') ! On by default
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
@@ -1071,6 +1071,9 @@ contains
         ! HEMCO Extensions
         use HCOX_Driver_Mod,        only : HCOX_Run
 
+        ! Physical constants
+        use physconst,              only : mwdry
+
 
 !
 ! !INPUT/OUTPUT PARAMETERS:
@@ -1094,6 +1097,9 @@ contains
 !
         character(len=*),       parameter     :: subname = 'HCO_GC_Run'
 
+        ! Parameters
+        real(r8), parameter                   :: G0_100 = 100.e+0_r8 / 9.80665e+0_r8
+
         integer                               :: I, J, K
         integer                               :: HI, HJ, HL
 
@@ -1110,6 +1116,7 @@ contains
         ! Temporaries used for export
         real(ESMF_KIND_R8)                    :: exportFldHco(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: exportFldCAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: scratchFldCAM(1:LM, 1:my_CE)
 
         ! Temporaries used for export (2-D data)
         real(ESMF_KIND_R8)                    :: exportFldHco2(my_IS:my_IE, my_JS:my_JE)
@@ -1407,6 +1414,14 @@ contains
             exportFldHco(:,:,:) = 0.0_r8
             exportFldCAM(:,:)   = 0.0_r8
 
+            ! Do not handle aerosol number emissions here - needs fix first (hplin, 5/7/21)
+            ! if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a1" .or.
+            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a2" .or.
+            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a3" .or.
+            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a4") then
+            !     continue
+            ! endif
+
             ! Build history / pbuf field name (HCO_NO, HCO_CO, etc.)
             exportName = 'HCO_' // trim(HcoConfig%ModelSpc(spcID)%SpcName)
             doExport   = (FIRST .or. associated(HcoState%Spc(spcID)%Emis%Val))
@@ -1425,6 +1440,79 @@ contains
             ! Regrid exportFldHco to CAM grid...
             call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM, doRegrid=doExport)
 
+            ! Handle deposition flux from deposition velocity [1/s]
+            ! This can be performed on the CAM grid. (hplin, 5/7/21)
+            ! GEOS-Chem:
+            !  Step 1)
+            !              dflx(I,J,NA) = dflx(I,J,NA)                                     &
+            !              + ( dep * spc(I,J,NA) / (AIRMW / ThisSpc%MW_g)  )
+            !  Step 2) Convert to 1/s
+            !             dflx(I,J,:) = dflx(I,J,:) * State_Met%AD(I,J,1)                        &
+            !                     / State_Grid%Area_M2(I,J)
+            !
+            !  Note that, AD is actually DELP_DRY * G0_100 * AREA_M2, thus the final expression is
+            !  just multiplied by DELP_DRY * G0_100, unit: kg/m2
+            !  Multiplied by 1/s, this gives kg/m2/s
+            !
+            ! We retrieve the concentration flux read from the convert state module
+            ! (on the CAM grid) and loop through it to apply deposition fluxes.
+            if(associated(HcoState%Spc(spcID)%Depv%Val)) then
+                ! Check if species is available for deposition (hard-coded)
+                ! FIXME: hplin 5/7/21
+                if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS" .or.            &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ACET" .or.           &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3COCH3" .or.       &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ALD2" .or.           &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3CHO" .or.         &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MENO3" .or.          &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ETNO3" .or.          &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MOH" .or.            &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
+
+                    ! Clear data
+                    exportFldCAM2(:) = 0.0_r8
+
+                    ! Regrid deposition flux HCO to CAM
+                    exportFldHco2(my_IS:my_IE,my_JS:my_JE) = HcoState%Spc(spcID)%Depv%Val(1:HI,1:HJ)
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+
+                endif
+
+                ! Perform handling: Note species-specific State_CAM_* data
+                ! Note handling is for surface (idx LM for CAM inverted-atm)
+                if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmDMS(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                elseif( &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ACET" .or. &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3COCH3") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmACET(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                elseif( &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ALD2" .or. &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3CHO") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmALD2(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                elseif( &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MOH" .or. &
+                   trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmMOH(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MENO3") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmMENO3(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ETNO3") then
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                       exportFldCAM2(:) * State_CAM_chmETNO3(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
+                                          * State_CAM_DELP_DRYs(:) * G0_100
+                endif
+            endif
+
             if(doExport) then
                 ! Write to history on CAM mesh
                 call HCO_Export_History_CAM3D(exportName, exportFldCAM)
@@ -1434,6 +1522,15 @@ contains
             endif
 
         enddo
+
+
+        !-----------------------------------------------------------------------
+        ! Update aerosol number emissions with correct parameters
+        ! for CAM-chem and CESM2-GC
+        !
+        ! TODO: Implement later. Now using HEMCO config file method (hplin, 5/7/21)
+        !-----------------------------------------------------------------------
+        ! call HCO_Calc_Aero_Emis ( ... )
 
         !-----------------------------------------------------------------------
         ! Handle special diagnostics for some extensions

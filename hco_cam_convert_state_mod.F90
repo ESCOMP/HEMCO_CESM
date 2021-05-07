@@ -32,6 +32,7 @@ module hco_cam_convert_state_mod
     use hco_esmf_grid,            only: my_CE
     use hco_esmf_grid,            only: my_IS, my_IE, my_JS, my_JE
     use hco_esmf_grid,            only: HCO_Grid_CAM2HCO_2D, HCO_Grid_CAM2HCO_3D
+    use hco_esmf_grid,            only: HCO_Grid_HCO2CAM_2D
     use ppgrid,                   only: pcols, pver ! Cols, verts
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
 
@@ -93,6 +94,13 @@ module hco_cam_convert_state_mod
 !  U10M
 !  V10M
 !
+!  For SeaFlux deposition:
+!      GEOS-Chem        DMS/ACET    /ALD2  /MENO3/ETNO3/MOH
+!      MOZART-T1        DMS/CH3COCH3/CH3CHO/--   /--   /CH3OH
+!  * Some species are only available in one particular mechanism.
+!  Species used for deposition are computed on the native CAM grid, and no regridding
+!  is thus performed.
+!
 !  STUBS
 !  ----------------------------------------------------------------------------
 !  GWETTOP = 0
@@ -102,6 +110,7 @@ module hco_cam_convert_state_mod
 ! !REVISION HISTORY:
 !  15 Dec 2020 - H.P. Lin    - Initial version
 !  04 Feb 2021 - H.P. Lin    - Add State_GC_* for some GC-specific intermediate qtys
+!  07 May 2021 - H.P. Lin    - Add state fluxes on CAM grid for deposition computation
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -126,11 +135,25 @@ module hco_cam_convert_state_mod
 
     real(r8), pointer, public        :: State_CAM_CSZA(:)
 
+    real(r8), pointer, public        :: State_CAM_AREAM2(:)
+    real(r8), pointer, public        :: State_CAM_AIRs  (:)
+    real(r8), pointer, public        :: State_CAM_DELP_DRYs(:)
+
     ! Chem Constituents on CAM grid
     real(r8), pointer, public        :: State_CAM_chmO3 (:,:)
     real(r8), pointer, public        :: State_CAM_chmNO (:,:)
     real(r8), pointer, public        :: State_CAM_chmNO2(:,:)
     real(r8), pointer, public        :: State_CAM_chmHNO3(:,:)
+
+    ! For surface dep calculation, only surface needs to be copied
+    real(r8), pointer, public        :: State_CAM_chmDMS(:)
+    real(r8), pointer, public        :: State_CAM_chmACET(:)
+    real(r8), pointer, public        :: State_CAM_chmALD2(:)
+    real(r8), pointer, public        :: State_CAM_chmMENO3(:)
+    real(r8), pointer, public        :: State_CAM_chmETNO3(:)
+    real(r8), pointer, public        :: State_CAM_chmMOH(:)
+
+
 
     ! J-values from chemistry (2-D only, on surface)
     real(r8), pointer, public        :: State_CAM_JNO2(:)
@@ -190,6 +213,8 @@ contains
 !
         use cam_logfile,      only: iulog
         use spmd_utils,       only: masterproc
+
+        use HCO_ESMF_Grid,    only: AREA_M2, HCO_Grid_HCO2CAM_2D
 !
 ! !REMARKS:
 !  Fields are allocated here after initialization of the hco\_esmf\_grid.
@@ -225,6 +250,19 @@ contains
         ASSERT_(RC==0)
 
         allocate(State_HCO_PBLH(my_IM, my_JM), stat=RC)
+        ASSERT_(RC==0)
+
+        ! Grid box area [m2]
+        ! Used for calculation of deposition fluxes directly on CAM grid
+        allocate(State_CAM_AREAM2(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        ! Surface grid box weight [kg]
+        allocate(State_CAM_AIRs(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        ! Surface delta grid box pressure differential [hPa]
+        allocate(State_CAM_DELP_DRYs(my_CE), stat=RC)
         ASSERT_(RC==0)
 
         ! Surface pressure (wet) [Pa]
@@ -275,6 +313,20 @@ contains
         allocate(State_CAM_chmHNO3(LM, my_CE), stat=RC)
         ASSERT_(RC==0)
 
+        ! Constituents for deposition flux, copy sfc only
+        allocate(State_CAM_chmDMS(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_chmACET(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_chmALD2(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_chmMENO3(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_chmETNO3(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_chmMOH(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
         ! J-values
         allocate(State_CAM_JNO2 (my_CE), stat=RC)
         ASSERT_(RC==0)
@@ -320,8 +372,18 @@ contains
         State_HCO_chmNO2(:,:,:) = 0.0_r8
         State_HCO_chmHNO3(:,:,:) = 0.0_r8
 
+        State_CAM_chmDMS(:) = 0.0_r8
+        State_CAM_chmACET(:) = 0.0_r8
+        State_CAM_chmALD2(:) = 0.0_r8
+        State_CAM_chmMENO3(:) = 0.0_r8
+        State_CAM_chmETNO3(:) = 0.0_r8
+        State_CAM_chmMOH(:) = 0.0_r8
+
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
+
+        ! Populate persistent values
+        call HCO_Grid_HCO2CAM_2D(AREA_M2, State_CAM_AREAM2)
 
     end subroutine HCOI_Allocate_All
 !EOC
@@ -342,6 +404,9 @@ contains
 !
 ! !USES:
 !
+        ! Pbuf wrappers by hplin
+        use hco_cam_exports,only: HCO_Export_Pbuf_QueryField
+
         ! Type descriptors
         use camsrfexch,     only: cam_in_t
         use physics_types,  only: physics_state
@@ -415,6 +480,7 @@ contains
 
         ! constituent indices:
         integer                      :: id_O3, id_NO, id_NO2, id_HNO3
+        integer                      :: id_DMS, id_ACET, id_ALD2, id_MENO3, id_ETNO3, id_MOH
 
         ! Temporary geographical indices, allocated to max size (pcols)
         ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
@@ -442,8 +508,9 @@ contains
         ! J-values - might be -1 if not existent (i.e. not in CESM-GC)
         ! Note: Assuming they exist in pairs (if index_JNO2 exists, all do)
         ! (hplin, 3/3/21)
-        index_JNO2 = pbuf_get_index('HCO_IN_JNO2')
-        index_JOH  = pbuf_get_index('HCO_IN_JOH')
+        index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
+        index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
+        RC = ESMF_SUCCESS ! dummy
 
         ! Set feature flag
         feat_JValues = index_JNO2 > 0
@@ -453,6 +520,8 @@ contains
         ! Get calday for cosza (current time, not midpoint of dt)
         calday = get_curr_calday()
 
+        ! TODO: Move constituent index calculation (which only needs to be initialized once)
+        ! to a place where it only runs once ...
         ! Setup constituent indices so their concentrations can be retrieved
         ! from state%q (MMR)
         call cnst_get_ind('O3', id_O3)
@@ -460,7 +529,24 @@ contains
         call cnst_get_ind('NO2', id_NO2)
         call cnst_get_ind('HNO3', id_HNO3)
 
-        if(masterproc) write(iulog,*) "hplin fixme: O3, NO, NO2, HNO3", id_O3, id_NO, id_NO2, id_HNO3
+        ! Retrieve optional - for deposition - constituent IDs
+        call cnst_get_ind('DMS', id_DMS)
+        call cnst_get_ind('MENO3', id_MENO3)
+        call cnst_get_ind('ETNO3', id_ETNO3)
+        call cnst_get_ind('ACET', id_ACET)
+        if(id_ACET <= 0) then
+            call cnst_get_ind('CH3COCH3', id_ACET)
+        endif
+        call cnst_get_ind('ALD2', id_ALD2)
+        if(id_ALD2 <= 0) then
+            call cnst_get_ind('CH3CHO', id_ALD2)
+        endif
+        call cnst_get_ind('MOH', id_MOH)
+        if(id_MOH <= 0) then
+            call cnst_get_ind('CH3OH', id_MOH)
+        endif
+
+        ! if(masterproc) write(iulog,*) "hplin fixme: O3, NO, NO2, HNO3", id_O3, id_NO, id_NO2, id_HNO3
 
         ! Phase 1: Store the fields in hemco_interface (copy)
         I = 0
@@ -505,6 +591,14 @@ contains
                     State_CAM_chmNO2(K,I) = phys_state(lchnk)%q(J,K,id_NO2)
                     State_CAM_chmHNO3(K,I) = phys_state(lchnk)%q(J,K,id_HNO3)
                 enddo
+
+                ! Verify and retrieve surface fluxes for deposition, if available (hplin, 5/7/21)
+                if(id_DMS  > 0) State_CAM_chmDMS (I)   = phys_state(lchnk)%q(J,LM,id_DMS )
+                if(id_MENO3 > 0) State_CAM_chmMENO3(I) = phys_state(lchnk)%q(J,LM,id_MENO3)
+                if(id_ETNO3 > 0) State_CAM_chmETNO3(I) = phys_state(lchnk)%q(J,LM,id_ETNO3)
+                if(id_ACET > 0) State_CAM_chmACET(I)   = phys_state(lchnk)%q(J,LM,id_ACET)
+                if(id_ALD2 > 0) State_CAM_chmALD2(I)   = phys_state(lchnk)%q(J,LM,id_ALD2)
+                if(id_MOH  > 0) State_CAM_chmMOH (I)   = phys_state(lchnk)%q(J,LM,id_MOH )
 
                 !----------------------------------------
                 ! 2-D Fields
@@ -696,10 +790,16 @@ contains
 
             ! Calculate AD (AIR mass)
             ! Note that AREA_M2 are GLOBAL indices so you need to perform offsetting!!
+            !
+            ! DELP_DRY is in [hPa]. G0_100 is 100/g, converts to [Pa], and divides by [m/s2] (accel to kg)
             State_HCO_AIR(I,J,L) = State_GC_DELP_DRY(I,J,L) * G0_100 * AREA_M2(my_IS+I-1,my_JS+J-1)
         enddo
         enddo
         enddo
+
+        ! Populate CAM information equivalent
+        call HCO_Grid_HCO2CAM_2D(State_GC_DELP_DRY(:,:,1), State_CAM_DELP_DRYs)
+        call HCO_Grid_HCO2CAM_2D(State_HCO_AIR(:,:,1), State_CAM_AIRs)
 
         !-----------------------------------------------------------------------
         ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
