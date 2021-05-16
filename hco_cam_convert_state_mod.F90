@@ -531,17 +531,17 @@ contains
 
         ! Retrieve optional - for deposition - constituent IDs
         call cnst_get_ind('DMS', id_DMS)
-        call cnst_get_ind('MENO3', id_MENO3)
-        call cnst_get_ind('ETNO3', id_ETNO3)
-        call cnst_get_ind('ACET', id_ACET)
+        call cnst_get_ind('MENO3', id_MENO3, abort=.False.)
+        call cnst_get_ind('ETNO3', id_ETNO3, abort=.False.)
+        call cnst_get_ind('ACET', id_ACET, abort=.False.)
         if(id_ACET <= 0) then
             call cnst_get_ind('CH3COCH3', id_ACET)
         endif
-        call cnst_get_ind('ALD2', id_ALD2)
+        call cnst_get_ind('ALD2', id_ALD2, abort=.False.)
         if(id_ALD2 <= 0) then
             call cnst_get_ind('CH3CHO', id_ALD2)
         endif
-        call cnst_get_ind('MOH', id_MOH)
+        call cnst_get_ind('MOH', id_MOH, abort=.False.)
         if(id_MOH <= 0) then
             call cnst_get_ind('CH3OH', id_MOH)
         endif
