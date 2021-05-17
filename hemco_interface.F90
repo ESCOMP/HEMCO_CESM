@@ -109,6 +109,9 @@ module hemco_interface
 !  Updated 2/24/21 from T. Fritz: Now uses constituents list, since short-term species are
 !  not emitted. See PR: https://github.com/jimmielin/HEMCO_CESM/pull/5
 !
+!  It is now May 15, 2021 and I am vaccinated. Can we visit other peoples homes now?
+!  ref: xkcd.com/2454
+!
 ! !REVISION HISTORY:
 !  29 Jan 2020 - H.P. Lin    - Initial version
 !EOP
@@ -1805,7 +1808,9 @@ contains
         dummy_0_CAM(7,:) = State_CAM_pblh
         dummy_0_CAM(8,:) = State_CAM_CSZA
         dummy_0_CAM(9,:) = State_CAM_psdry
-        dummy_0_CAM(9,:) = State_CAM_chmO3(LM,:)
+        dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
+        dummy_0_CAM(11,:) = State_CAM_JNO2
+        dummy_0_CAM(12,:) = State_CAM_JOH
 
         ! fill with some test data, but clean the data first!
         dummy_1(:,:,:) = 0.0_r8
