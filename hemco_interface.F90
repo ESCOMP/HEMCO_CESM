@@ -423,12 +423,16 @@ contains
         call addfld("DIAG_CAM_TEST", (/'lev'/), 'I', '1',          &
                     'HEMCO Debug, PETID written on CAM',             &
                     gridname="physgrid")
-        call add_default("DIAG_CAM_TEST", 2, 'I')      ! Make this field always ON
+
+        ! Enable default for debugging:
+        ! call add_default("DIAG_CAM_TEST", 2, 'I')      ! Make this field always ON
 
         call addfld("DIAG_HCO_TEST", (/'lev'/), 'I', '1',          &
                     'HEMCO Debug Data',             &
                     gridname="physgrid")
-        call add_default("DIAG_HCO_TEST", 2, 'I')      ! Make this field always ON
+
+        ! Enable default for debugging:
+        ! call add_default("DIAG_HCO_TEST", 2, 'I')      ! Make this field always ON
 
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
@@ -1436,7 +1440,7 @@ contains
             if(associated(HcoState%Spc(spcID)%Emis%Val)) then
                 exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:LM)
 
-                if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
+                !if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
                 !write(6,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
             endif
 
@@ -1568,7 +1572,7 @@ contains
             endif
             Ptr2D => NULL()
 
-            if(masterproc) write(iulog,*) "hplin debug: PARANOX_O3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
+            ! if(masterproc) write(iulog,*) "hplin debug: PARANOX_O3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
 
             exportName = 'HCO_PAR_HNO3_DEP'
             exportNameTmp = 'PAR_HNO3_DEP'
@@ -1589,7 +1593,7 @@ contains
             endif
             Ptr2D => NULL()
 
-            if(masterproc) write(iulog,*) "hplin debug: PARANOX_HNO3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
+            ! if(masterproc) write(iulog,*) "hplin debug: PARANOX_HNO3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
 
             if(masterproc) write(iulog,*) "HEMCO_CESM: done with exports for ParaNOX extension"
         endif
@@ -1600,6 +1604,9 @@ contains
         
         if(chem_is('GEOS-Chem')) then
             if(masterproc) write(iulog,*) "HEMCO_CESM: starting exports to GEOS-Chem"
+
+            ! Temporarily disable offline landtypes
+#if defined( HEMCO_CESM_OFFL_LT )            
             do N = 0, 72
                 ! Assume success
                 HMRC = HCO_SUCCESS
@@ -1644,6 +1651,7 @@ contains
                 endif
                 Ptr2D => NULL()
             enddo
+#endif
 
             if(masterproc) write(iulog,*) "HEMCO_CESM: after LANDTYPE/XLAI"
 
