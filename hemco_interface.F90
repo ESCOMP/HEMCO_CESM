@@ -420,15 +420,19 @@ contains
         ! AvgFlag: (cam_history) A mean, B mean00z, I instant, X max, M min, S stddev
         !
         ! This call should eventually be reflected elsewhere?
-        !call addfld("DIAG_CAM_TEST", (/'lev'/), 'I', '1',          &
-        !            'HEMCO Debug, PETID written on CAM',             &
-        !            gridname="physgrid")
-        !call add_default("DIAG_CAM_TEST", 2, 'I')      ! Make this field always ON
+        call addfld("DIAG_CAM_TEST", (/'lev'/), 'I', '1',          &
+                    'HEMCO Debug, PETID written on CAM',             &
+                    gridname="physgrid")
 
-        !call addfld("DIAG_HCO_TEST", (/'lev'/), 'I', '1',          &
-        !            'HEMCO Debug Data',             &
-        !            gridname="physgrid")
-        !call add_default("DIAG_HCO_TEST", 2, 'I')      ! Make this field always ON
+        ! Enable default for debugging:
+        ! call add_default("DIAG_CAM_TEST", 2, 'I')      ! Make this field always ON
+
+        call addfld("DIAG_HCO_TEST", (/'lev'/), 'I', '1',          &
+                    'HEMCO Debug Data',             &
+                    gridname="physgrid")
+
+        ! Enable default for debugging:
+        ! call add_default("DIAG_HCO_TEST", 2, 'I')      ! Make this field always ON
 
         !-----------------------------------------------------------------------
         ! Initialize the HEMCO configuration object...
@@ -1568,8 +1572,6 @@ contains
             endif
             Ptr2D => NULL()
 
-            !if(masterproc) write(iulog,*) "hplin debug: PARANOX_O3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
-
             exportName = 'HCO_PAR_HNO3_DEP'
             exportNameTmp = 'PAR_HNO3_DEP'
             call GetHcoDiagn(HcoState, ExtState, DiagnName='PARANOX_HNO3_DEPOSITION_FLUX', &
@@ -1589,8 +1591,6 @@ contains
             endif
             Ptr2D => NULL()
 
-            !if(masterproc) write(iulog,*) "hplin debug: PARANOX_HNO3_DEP", maxval(exportFldHco2), maxval(exportFldCAM2)
-
             !if(masterproc) write(iulog,*) "HEMCO_CESM: done with exports for ParaNOX extension"
         endif
 
@@ -1600,52 +1600,53 @@ contains
         
         if(chem_is('GEOS-Chem')) then
             if(masterproc) write(iulog,*) "HEMCO_CESM: starting exports to GEOS-Chem"
-            !do N = 0, 72
-            !    ! Assume success
-            !    HMRC = HCO_SUCCESS
+            ! Temporarily disable offline landtypes
+#if defined( HEMCO_CESM_OFFL_LT )            
+            do N = 0, 72
+                ! Assume success
+                HMRC = HCO_SUCCESS
 
-            !    ! LANDTYPExx
-            !    write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
-            !    exportName = 'HCO_' // trim(exportNameTmp)
+                ! LANDTYPExx
+                write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
+                exportName = 'HCO_' // trim(exportNameTmp)
 
-            !    exportFldCAM2(:)   = 0.0_r8
+                exportFldCAM2(:)   = 0.0_r8
 
-            !    ! Grab the pointer if available
-            !    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
-            !    doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            !    if(HMRC == HCO_SUCCESS .and. FND) then
-            !        exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
-            !        call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
-            !    endif
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+                doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
+                if(HMRC == HCO_SUCCESS .and. FND) then
+                    exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+                endif
 
-            !    if(doExport) then
-            !        call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
-            !        call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
-            !    endif
-            !    Ptr2D => NULL()
+                if(doExport) then
+                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                    call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
+                endif
+                Ptr2D => NULL()
 
-            !    ! XLAIxx
-            !    write(exportNameTmp, '(a,i2.2)') 'XLAI', N
-            !    exportName = 'HCO_' // trim(exportNameTmp)
+                ! XLAIxx
+                write(exportNameTmp, '(a,i2.2)') 'XLAI', N
+                exportName = 'HCO_' // trim(exportNameTmp)
 
-            !    exportFldCAM2(:)   = 0.0_r8
+                exportFldCAM2(:)   = 0.0_r8
 
-            !    ! Grab the pointer if available
-            !    call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
-            !    doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
-            !    if(HMRC == HCO_SUCCESS .and. FND) then
-            !        exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
-            !        call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
-            !    endif
+                ! Grab the pointer if available
+                call HCO_GetPtr(HcoState, exportNameTmp, Ptr2D, HMRC, FOUND=FND)
+                doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
+                if(HMRC == HCO_SUCCESS .and. FND) then
+                    exportFldHco2(:,:) = Ptr2D(:,:) ! Have to promote precision
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+                endif
 
-            !    if(doExport) then
-            !        call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
-            !        call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
-            !    endif
-            !    Ptr2D => NULL()
-            !enddo
-
-            !if(masterproc) write(iulog,*) "HEMCO_CESM: after LANDTYPE/XLAI"
+                if(doExport) then
+                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+                    call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
+                endif
+                Ptr2D => NULL()
+            enddo
+#endif
 
             ! UVALBEDO
             ! Warning: Keep these exportNameTmp as it allows for reuse of
