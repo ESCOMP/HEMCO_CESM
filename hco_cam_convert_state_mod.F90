@@ -379,6 +379,9 @@ contains
         State_CAM_chmETNO3(:) = 0.0_r8
         State_CAM_chmMOH(:) = 0.0_r8
 
+        State_CAM_JNO2(:) = 0.0_r8
+        State_CAM_JOH (:) = 0.0_r8
+
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
 
@@ -490,6 +493,9 @@ contains
         ! Current calday for SZA
         real(r8)                     :: calday
 
+        ! is this first timestep? skip reading pbuf from certain data if so
+        logical, save                :: FIRST = .true.
+
         !----------------------------------------------------
         ! Assume success
         RC = ESMF_SUCCESS
@@ -530,20 +536,20 @@ contains
         call cnst_get_ind('HNO3', id_HNO3)
 
         ! Retrieve optional - for deposition - constituent IDs
-        call cnst_get_ind('DMS', id_DMS)
-        call cnst_get_ind('MENO3', id_MENO3)
-        call cnst_get_ind('ETNO3', id_ETNO3)
-        call cnst_get_ind('ACET', id_ACET)
+        call cnst_get_ind('DMS', id_DMS, abort=.false.)
+        call cnst_get_ind('MENO3', id_MENO3, abort=.false.)
+        call cnst_get_ind('ETNO3', id_ETNO3, abort=.false.)
+        call cnst_get_ind('ACET', id_ACET, abort=.false.)
         if(id_ACET <= 0) then
-            call cnst_get_ind('CH3COCH3', id_ACET)
+            call cnst_get_ind('CH3COCH3', id_ACET, abort=.false.)
         endif
-        call cnst_get_ind('ALD2', id_ALD2)
+        call cnst_get_ind('ALD2', id_ALD2, abort=.false.)
         if(id_ALD2 <= 0) then
-            call cnst_get_ind('CH3CHO', id_ALD2)
+            call cnst_get_ind('CH3CHO', id_ALD2, abort=.false.)
         endif
-        call cnst_get_ind('MOH', id_MOH)
+        call cnst_get_ind('MOH', id_MOH, abort=.false.)
         if(id_MOH <= 0) then
-            call cnst_get_ind('CH3OH', id_MOH)
+            call cnst_get_ind('CH3OH', id_MOH, abort=.false.)
         endif
 
         ! if(masterproc) write(iulog,*) "hplin fixme: O3, NO, NO2, HNO3", id_O3, id_NO, id_NO2, id_HNO3
@@ -650,15 +656,20 @@ contains
                     endif
                 endif
 
-                ! J-values (from CESM-GC only, at the moment)
-                if(feat_JValues) then
+                ! J-values (from CESM-GC only, at the moment. Added to CAM-chem/mozart 5/16/21)
+                if(feat_JValues .and. .not. FIRST) then
                     State_CAM_JNO2(I) = pbuf_tmp_JNO2(J)
                     State_CAM_JOH (I) = pbuf_tmp_JOH (J)
+                    ! write(6,*) "hplin debug***: jno2, joh j-v", I,J, pbuf_tmp_JNO2(J), pbuf_tmp_JOH(J)
                 endif
             enddo
         enddo
 
         ! The below are stubs and are not regridded or processed for now due to lack of data
+
+        if(FIRST) then
+            FIRST = .false.
+        endif
         
         if(masterproc) then
             write(iulog,*) "> CAM_GetBefore_HCOI finished"
