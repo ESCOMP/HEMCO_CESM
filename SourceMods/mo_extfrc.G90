@@ -499,14 +499,14 @@ contains
              molec_to_kg = adv_mass( spc_ndx ) / avogadro *cm2_to_m2 * kg_to_g
 
              frcing_col(:ncol) = 0._r8
-              frcing_col_kg(:ncol) = 0._r8
+             frcing_col_kg(:ncol) = 0._r8
              do k = 1, pver
                 frcing_col(:ncol) = frcing_col(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm
                 frcing_col_kg(:ncol) = frcing_col_kg(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm*molec_to_kg
              enddo
 
              xfcname = trim(extfrc_lst(m))//'_CLXF'
-              call outfld( xfcname, frcing_col(:ncol), ncol, lchnk )
+             call outfld( xfcname, frcing_col(:ncol), ncol, lchnk )
              xfcname = trim(extfrc_lst(m))//'_CMXF'
              call outfld( xfcname, frcing_col_kg(:ncol), ncol, lchnk )
              if ( masterproc ) then
