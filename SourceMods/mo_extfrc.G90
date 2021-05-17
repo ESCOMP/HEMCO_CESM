@@ -169,10 +169,12 @@ contains
 
     n_frc_files = mm
 
+#if !defined ( HEMCO_CESM )
     if( n_frc_files < 1 ) then
        if (masterproc) write(iulog,*) 'There are no species with insitu forcings'
        return
     end if
+#endif
 
     if (masterproc) write(iulog,*) ' '
 
@@ -223,6 +225,7 @@ contains
        endif
     enddo
 
+#if !defined ( HEMCO_CESM )
     if (masterproc) then
        !-----------------------------------------------------------------------
        !  ... diagnostics
@@ -331,7 +334,7 @@ contains
                           rmv_file, extfrc_cycle_yr, extfrc_fixed_ymd, extfrc_fixed_tod, trim(extfrc_type) )
 
     enddo frcing_loop
-
+#endif
 
   end subroutine extfrc_inti
 
@@ -355,11 +358,12 @@ contains
     !-----------------------------------------------------------------------
     integer :: m
 
+#if !defined( HEMCO_CESM )
     do m = 1,n_frc_files
        call advance_trcdata( forcings(m)%fields, forcings(m)%file, state, pbuf2d  )
     end do
 
-#if defined( HEMCO_CESM )
+#else
     ! save pbuf for use later in set_srf_emissions
     hco_pbuf2d => pbuf2d
 
@@ -476,7 +480,7 @@ contains
         tmpIdx = pbuf_get_index(fldname_ns, RC)
         if(tmpIdx < 0) then
           if(masterproc) then
-            write(iulog,*) "mo_extfrc hemco: Field not found", fldname_ns
+            write(iulog,*) "mo_extfrc hemco: Field not found ", TRIM(fldname_ns)
           endif
         else
           ! this is already in chunk, retrieve it
@@ -493,8 +497,28 @@ contains
           enddo
           ! remember vertical is inverted - REMOVE the top level as it is injected in mo_srf_emissions instead
 
-          if(masterproc) then
-              write(iulog,*) "mo_extfrc hemco: debug added 3D emiss for", solsym(n), maxval(frcing(1:ncol, :, m))
+          if ( frc_from_dataset(m) ) then 
+
+             xfcname = trim(extfrc_lst(m))//'_XFRC'
+          call outfld( xfcname, frcing(:ncol,:,n), ncol, lchnk )
+          spc_ndx = get_spc_ndx( extfrc_lst(m) )
+          molec_to_kg = adv_mass( spc_ndx ) / avogadro *cm2_to_m2 * kg_to_g
+
+          frcing_col(:ncol) = 0._r8
+          frcing_col_kg(:ncol) = 0._r8
+             do k = 1, pver
+             frcing_col(:ncol) = frcing_col(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm
+             frcing_col_kg(:ncol) = frcing_col_kg(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm*molec_to_kg
+          enddo
+
+             xfcname = trim(extfrc_lst(m))//'_CLXF'
+          call outfld( xfcname, frcing_col(:ncol), ncol, lchnk )
+             xfcname = trim(extfrc_lst(m))//'_CMXF'
+          call outfld( xfcname, frcing_col_kg(:ncol), ncol, lchnk )
+             if ( masterproc ) then
+                 write(iulog,*) "mo_extfrc hemco: debug added 3D emiss for ", TRIM(solsym(n)), maxval(frcing(:ncol,:,m))
+             endif
+
           endif
 
         endif
