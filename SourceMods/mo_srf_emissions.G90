@@ -115,7 +115,7 @@ contains
     nn = 0
     indx(:) = 0
 
-#if !defined( HEMCO_CESM )
+#if !defined ( HEMCO_CESM )
     count_emis: do n=1,gas_pcnst
        if ( len_trim(srf_emis_specifier(n) ) == 0 ) then
           exit count_emis
@@ -294,15 +294,9 @@ contains
     do m = 1,n_emis_files
        call advance_trcdata( emissions(m)%fields, emissions(m)%file, state, pbuf2d  )
     end do
-#endif
-
-#if defined( HEMCO_CESM )
+#else
     ! save pbuf for use later in set_srf_emissions
     hco_pbuf2d => pbuf2d
-
-    if(masterproc) then
-      write(iulog,*) "hplin debug set_srf_emissions_time: saved pbuf2d"
-    endif
 #endif
 
   end subroutine set_srf_emissions_time
@@ -407,9 +401,7 @@ contains
        endif
 
     end do emis_loop
-#endif
-
-#if defined( HEMCO_CESM )
+#else
     !--------------------------------------------------------
     ! ... set HEMCO_CESM emissions 
     ! hplin 7/19/20
@@ -434,8 +426,8 @@ contains
       ! species name: solsym(n)
       fldname_ns = 'HCO_' // trim(solsym(n))
       tmpIdx = pbuf_get_index(fldname_ns, RC)
-      if(tmpIdx < 0) then
-        if(masterproc) write(iulog,*) "mo_srf_emissions hemco: Field not found ", trim(fldname_ns)
+      if ( tmpIdx < 0 ) then
+        if ( masterproc ) write(iulog,*) "mo_srf_emissions hemco: Field not found ", TRIM(fldname_ns)
       else
         ! this is already in chunk, retrieve it
         pbuf_chnk => pbuf_get_chunk(hco_pbuf2d, lchnk)
@@ -453,13 +445,6 @@ contains
       endif
     enddo
 #endif
-
-    ! hplin debug:
-    ! if(masterproc) then
-    !   write(iulog, *) "hplin debug mo_srf_emissions:"
-    !   write(iulog, *) "lchnk, ncol, size(sflx, 1):", lchnk, ncol, size(sflx, 1)
-    !   write(iulog, *) "size(sflx, 2), gas_pcnst:", size(sflx, 2), gas_pcnst
-    ! endif
 
 #if !defined( HEMCO_CESM )
     call get_rlat_all_p( lchnk, ncol, rlats )

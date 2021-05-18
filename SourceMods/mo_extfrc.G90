@@ -362,15 +362,9 @@ contains
     do m = 1,n_frc_files
        call advance_trcdata( forcings(m)%fields, forcings(m)%file, state, pbuf2d  )
     end do
-#endif
-
-#if defined( HEMCO_CESM )
+#else
     ! save pbuf for use later in set_srf_emissions
     hco_pbuf2d => pbuf2d
-
-    if(masterproc) then
-      write(iulog,*) "hplin debug set_srf_emissions_time: saved pbuf2d"
-    endif
 #endif
 
   end subroutine extfrc_timestep_init
@@ -481,7 +475,7 @@ contains
         tmpIdx = pbuf_get_index(fldname_ns, RC)
         if(tmpIdx < 0) then
           if(masterproc) then
-            write(iulog,*) "mo_extfrc hemco: Field not found ", trim(fldname_ns)
+            write(iulog,*) "mo_extfrc hemco: Field not found ", TRIM(fldname_ns)
           endif
         else
           ! this is already in chunk, retrieve it
@@ -499,28 +493,26 @@ contains
           ! remember vertical is inverted - REMOVE the top level as it is injected in mo_srf_emissions instead
 
           if ( frc_from_dataset(m) ) then 
-            xfcname = trim(extfrc_lst(m))//'_XFRC'
-            call outfld( xfcname, frcing(:ncol,:,n), ncol, lchnk )
-            spc_ndx = get_spc_ndx( extfrc_lst(m) )
-            molec_to_kg = adv_mass( spc_ndx ) / avogadro *cm2_to_m2 * kg_to_g
+             xfcname = trim(extfrc_lst(m))//'_XFRC'
+             call outfld( xfcname, frcing(:ncol,:,n), ncol, lchnk )
+             spc_ndx = get_spc_ndx( extfrc_lst(m) )
+             molec_to_kg = adv_mass( spc_ndx ) / avogadro *cm2_to_m2 * kg_to_g
 
-            frcing_col(:ncol) = 0._r8
-            frcing_col_kg(:ncol) = 0._r8
-            do k = 1, pver
-               frcing_col(:ncol) = frcing_col(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm
-               frcing_col_kg(:ncol) = frcing_col_kg(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm*molec_to_kg
-            enddo
+             frcing_col(:ncol) = 0._r8
+             frcing_col_kg(:ncol) = 0._r8
+             do k = 1, pver
+                frcing_col(:ncol) = frcing_col(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm
+                frcing_col_kg(:ncol) = frcing_col_kg(:ncol) + frcing(:ncol,k,m)*(zint(:ncol,k)-zint(:ncol,k+1))*km_to_cm*molec_to_kg
+             enddo
 
-            xfcname = trim(extfrc_lst(m))//'_CLXF'
-            call outfld( xfcname, frcing_col(:ncol), ncol, lchnk )
-            xfcname = trim(extfrc_lst(m))//'_CMXF'
-            call outfld( xfcname, frcing_col_kg(:ncol), ncol, lchnk )
+             xfcname = trim(extfrc_lst(m))//'_CLXF'
+             call outfld( xfcname, frcing_col(:ncol), ncol, lchnk )
+             xfcname = trim(extfrc_lst(m))//'_CMXF'
+             call outfld( xfcname, frcing_col_kg(:ncol), ncol, lchnk )
+             if ( masterproc ) then
+                 write(iulog,*) "mo_extfrc hemco: debug added 3D emiss for ", TRIM(solsym(n)), maxval(frcing(:ncol,:,m))
+             endif
           endif
-
-          if(masterproc) then
-              write(iulog,*) "mo_extfrc hemco: debug added 3D emiss for", trim(solsym(n)), maxval(frcing(1:ncol, :, m))
-          endif
-
         endif
       endif
     enddo
@@ -566,7 +558,6 @@ contains
           call outfld( xfcname, frcing_col_kg(:ncol), ncol, lchnk )
        endif
     end do frc_loop
-
 
 #endif
 
