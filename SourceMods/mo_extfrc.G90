@@ -513,7 +513,6 @@ contains
                  write(iulog,*) "mo_extfrc hemco: debug added 3D emiss for ", TRIM(solsym(n)), maxval(frcing(:ncol,:,m))
              endif
           endif
-
         endif
       endif
     enddo

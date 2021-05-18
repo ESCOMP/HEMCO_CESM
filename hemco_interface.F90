@@ -1728,8 +1728,6 @@ contains
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
-
-            !if(masterproc) write(iulog,*) "HEMCO_CESM: done with exports for ParaNOX extension"
         endif
 
         !-----------------------------------------------------------------------
