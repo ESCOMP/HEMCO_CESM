@@ -1211,6 +1211,7 @@ contains
         use HCO_Diagn_Mod,          only: HcoDiagn_AutoUpdate
         use HCO_Driver_Mod,         only: HCO_Run
         use HCO_EmisList_Mod,       only: Hco_GetPtr
+        use HCO_Calc_Mod,           only: Hco_EvalFld
         use HCO_FluxArr_Mod,        only: HCO_FluxArrReset
         use HCO_GeoTools_Mod,       only: HCO_CalcVertGrid, HCO_SetPBLm
 
@@ -1805,17 +1806,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CH3CL', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CH3CL', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CH2CL2
             write(exportNameTmp, '(a)') 'VMR_CH2CL2'
@@ -1823,17 +1822,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CH2CL2', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CH2CL2', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CHCL3
             write(exportNameTmp, '(a)') 'VMR_CHCL3'
@@ -1841,17 +1838,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CHCL3', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CHCL3', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CH3BR
             write(exportNameTmp, '(a)') 'VMR_CH3BR'
@@ -1859,17 +1854,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CH3BR', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CH3BR', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CCL4
             write(exportNameTmp, '(a)') 'VMR_CCL4'
@@ -1877,17 +1870,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CCL4', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CCL4', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CFC113
             write(exportNameTmp, '(a)') 'VMR_CFC113'
@@ -1895,17 +1886,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CFC113', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CFC113', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CFC114
             write(exportNameTmp, '(a)') 'VMR_CFC114'
@@ -1913,17 +1902,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CFC114', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CFC114', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CFC115
             write(exportNameTmp, '(a)') 'VMR_CFC115'
@@ -1931,17 +1918,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CFC115', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CFC115', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CFC11
             write(exportNameTmp, '(a)') 'VMR_CFC11'
@@ -1949,17 +1934,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CFC11', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CFC11', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CFC12
             write(exportNameTmp, '(a)') 'VMR_CFC12'
@@ -1967,17 +1950,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CFC12', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CFC12', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_CH3CCL3
             write(exportNameTmp, '(a)') 'VMR_CH3CCL3'
@@ -1985,17 +1966,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_CH3CCL3', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_CH3CCL3', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_H1211
             write(exportNameTmp, '(a)') 'VMR_H1211'
@@ -2003,17 +1982,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_H1211', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_H1211', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_H1301
             write(exportNameTmp, '(a)') 'VMR_H1301'
@@ -2021,17 +1998,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_H1301', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_H1301', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_H2402
             write(exportNameTmp, '(a)') 'VMR_H2402'
@@ -2039,17 +2014,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_H2402', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_H2402', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_HCFC141B
             write(exportNameTmp, '(a)') 'VMR_HCFC141B'
@@ -2057,17 +2030,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_HCFC141B', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_HCFC141B', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_HCFC142B
             write(exportNameTmp, '(a)') 'VMR_HCFC142B'
@@ -2075,17 +2046,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_HCFC142B', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_HCFC142B', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_HCFC22
             write(exportNameTmp, '(a)') 'VMR_HCFC22'
@@ -2093,17 +2062,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_HCFC22', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_HCFC22', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_N2O
             write(exportNameTmp, '(a)') 'VMR_N2O'
@@ -2111,17 +2078,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_N2O', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_N2O', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_OCS
             write(exportNameTmp, '(a)') 'VMR_OCS'
@@ -2129,17 +2094,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_OCS', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_OCS', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! VMR_H2
             write(exportNameTmp, '(a)') 'VMR_H2'
@@ -2147,17 +2110,15 @@ contains
             exportName = 'HCO_' // trim(exportNameTmp)
             exportFldCAM2(:) = 0.0_r8
 
-            call HCO_GetPtr(HcoState, 'SfcVMR_H2', Ptr2D, HMRC, FOUND=FND)
+            call HCO_EvalFld(HcoState, 'SfcVMR_H2', exportFldHco2, HMRC, FOUND=FND)
             doExport = (FIRST .or. (HMRC == HCO_SUCCESS .and. FND))
             if(HMRC == HCO_SUCCESS .and. FND) then
-                exportFldHco2(:,:) = Ptr2D(:,:)
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
                 call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
-            Ptr2D => NULL()
 
             ! UVALBEDO
             ! Warning: Keep these exportNameTmp as it allows for reuse of
