@@ -272,7 +272,7 @@ contains
         allocate(State_HCO_PSFC(my_IM, my_JM), stat=RC)
         ASSERT_(RC==0)
 
-        ! Surface pressure (dry) [Pa]
+        ! Surface pressure (dry) [hPa]
         allocate(State_CAM_psdry(my_CE), stat=RC)
         ASSERT_(RC==0)
 
@@ -619,11 +619,11 @@ contains
                 ! COSZA Cosine of zenith angle [1]
                 State_CAM_CSZA(I) = lchnk_zenith(J)
 
-                ! Sea level pressure [hPa]
+                ! Sea level pressure [Pa] (note difference in units!!)
                 State_CAM_ps(I) = phys_state(lchnk)%ps(J)
 
-                ! Dry pressure [hPa]
-                State_CAM_psdry(I) = phys_state(lchnk)%psdry(J)
+                ! Dry pressure [hPa] (Pa -> hPa, x0.01)
+                State_CAM_psdry(I) = phys_state(lchnk)%psdry(J) * 0.01_r8
 
                 ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
                 ! hplin 12/21/2020
@@ -796,8 +796,8 @@ contains
         do J = 1, my_JM
         do I = 1, my_IM
             ! Calculate DELP_DRY (from pressure_mod)
-            State_GC_DELP_DRY(I,J,L) = Ap(L)   + (Bp(L)   * State_GC_PSC2_DRY(I,J)) - &
-                                       Ap(L+1) + (Bp(L+1) * State_GC_PSC2_DRY(I,J))
+            State_GC_DELP_DRY(I,J,L) = (Ap(L)   + (Bp(L)   * State_GC_PSC2_DRY(I,J))) - &
+                                       (Ap(L+1) + (Bp(L+1) * State_GC_PSC2_DRY(I,J)))
 
             ! Calculate AD (AIR mass)
             ! Note that AREA_M2 are GLOBAL indices so you need to perform offsetting!!

@@ -374,7 +374,10 @@ contains
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
 
-        call HCO_Grid_Init (IM_in = 360, JM_in = 181, nPET_in = npes, RC=RC)
+        ! 288x201 = 0.9x1.25
+        ! 144x91  = 2.0x2.5
+        ! 
+        call HCO_Grid_Init (IM_in = 288, JM_in = 201, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
         !if(masterproc) then
@@ -559,7 +562,7 @@ contains
             ! with SeaFlux. This fragmentation will cause issues down the road, FIXME
             if(HcoState%Spc(N)%SpcName .eq. "CH3I") then
                 ! 101.325_r8
-                HcoState%Spc(N)%HenryK0  = 2.0e-3_r8 * 101.325_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryK0  = 0.20265_r8 ! [M/atm]
                 HcoState%Spc(N)%HenryCR  = 3.6e+3_r8 ! [K]
                 HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
             endif
@@ -573,7 +576,7 @@ contains
 
             if(HcoState%Spc(N)%SpcName .eq. "ACET") then
                 ! 101.325_r8. using new henry constants
-                HcoState%Spc(N)%HenryK0  = 2.7e-1_r8 * 101.325_r8 ! [M/atm]
+                HcoState%Spc(N)%HenryK0  = 2.74e+1_r8 ! [M/atm]
                 HcoState%Spc(N)%HenryCR  = 5500.0_r8 ! [K]
                 HcoState%Spc(N)%HenryPKA = -999e+0_r8 ! [1] (missing_r8 from species_mod)
             endif
@@ -1262,6 +1265,7 @@ contains
         real(ESMF_KIND_R8)                    :: exportFldHco(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: exportFldCAM(1:LM, 1:my_CE)
         real(ESMF_KIND_R8)                    :: scratchFldCAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: scratchFldCAM2(1:my_CE)
 
         ! Temporaries used for export (2-D data)
         real(ESMF_KIND_R8)                    :: exportFldHco2(my_IS:my_IE, my_JS:my_JE)
@@ -1271,6 +1275,7 @@ contains
         real(ESMF_KIND_R8)                    :: dummy_0_CAM(1:LM, 1:my_CE)
         real(ESMF_KIND_R8)                    :: dummy_1(my_IS:my_IE, my_JS:my_JE, 1:LM)
         real(ESMF_KIND_R8)                    :: dummy_1_CAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)                    :: dummy_2(my_IS:my_IE, my_JS:my_JE)
 
         ! Timing properties
         integer                               :: year, month, day, tod
@@ -1587,16 +1592,19 @@ contains
 
             ! Handle deposition flux from deposition velocity [1/s]
             ! This can be performed on the CAM grid. (hplin, 5/7/21)
-            ! GEOS-Chem:
+            ! GEOS-Chem: (from v/v dry)
             !  Step 1)
             !              dflx(I,J,NA) = dflx(I,J,NA)                                     &
             !              + ( dep * spc(I,J,NA) / (AIRMW / ThisSpc%MW_g)  )
+            ! for kg/kg dry, no conversion is needed:
+            !  Step 1a)    dflx = dflx + dep * spc
+            !
             !  Step 2) Convert to 1/s
             !             dflx(I,J,:) = dflx(I,J,:) * State_Met%AD(I,J,1)                        &
             !                     / State_Grid%Area_M2(I,J)
             !
             !  Note that, AD is actually DELP_DRY * G0_100 * AREA_M2, thus the final expression is
-            !  just multiplied by DELP_DRY * G0_100, unit: kg/m2
+            !  just multiplied by DELP_DRY * G0_100, unit: kg/m2 (delp_dry is hPa, g0_100 is 100 Pa/hPa * s2/m --> unit = Pa*m/s2 = kg/m/s2*s2/m = kg/m2)
             !  Multiplied by 1/s, this gives kg/m2/s
             !
             ! We retrieve the concentration flux read from the convert state module
@@ -1621,40 +1629,47 @@ contains
                     exportFldHco2(my_IS:my_IE,my_JS:my_JE) = HcoState%Spc(spcID)%Depv%Val(1:HI,1:HJ)
                     call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
 
+                    ! dbg:
+                    ! if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
+                    !     dummy_2(:,:) = exportFldHco2(:,:)
+                    ! endif
                 endif
 
                 ! Perform handling: Note species-specific State_CAM_* data
                 ! Note handling is for surface (idx LM for CAM inverted-atm)
                 if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmDMS(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    ! write(6,*) "hplin: dms val", State_CAM_chmDMS(:)
+                    ! write(6,*) "hplin: dms pv", exportFldCAM(LM,:)
+                    ! write(6,*) "hplin: dms delpS", State_CAM_DELP_DRYs(:)
+                    ! write(6,*) "hplin: dms depv", exportFldCAM2(:)
+                    ! write(6,*) "hplin: dms nv", (exportFldCAM2(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100)
+
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+
+                    ! dbg: just export the deposition 1/s flux
+                    ! scratchFldCAM2(:) = exportFldCAM2(:) !* State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ACET" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3COCH3") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmACET(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    ! write(6,*) "hplin: acet val", State_CAM_chmACET(:)
+                    ! write(6,*) "hplin: acet pv", exportFldCAM(LM,:)
+                    ! write(6,*) "hplin: acet delpS", State_CAM_DELP_DRYs(:)
+                    ! write(6,*) "hplin: acet depv", exportFldCAM2(:)
+                    ! write(6,*) "hplin: acet nv", (exportFldCAM2(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100)
+
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ALD2" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3CHO") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmALD2(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MOH" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmMOH(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MENO3") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmMENO3(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ETNO3") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
-                       exportFldCAM2(:) * State_CAM_chmETNO3(:) / (mwdry / HcoState%Spc(spcID)%MW_g) &
-                                          * State_CAM_DELP_DRYs(:) * G0_100
+                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                 endif
             endif
 
@@ -2308,6 +2323,7 @@ contains
         dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
         dummy_0_CAM(11,:) = State_CAM_JNO2
         dummy_0_CAM(12,:) = State_CAM_JOH
+        ! dummy_0_CAM(13,:) = scratchFldCAM2
 
         ! fill with some test data, but clean the data first!
         dummy_1(:,:,:) = 0.0_r8
@@ -2324,6 +2340,12 @@ contains
         dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
         dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
         dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
+
+        dummy_1(:,:,14) = HcoState%Grid%BXHEIGHT_M%Val(:,:,1)
+        dummy_1(:,:,15) = HcoState%Grid%BXHEIGHT_M%Val(:,:,2)
+        dummy_1(:,:,16) = State_HCO_F_OF_PBL(:,:,1)
+        dummy_1(:,:,17) = State_HCO_F_OF_PBL(:,:,2)
+        ! dummy_1(:,:,18) = dummy_2(:,:)
 
         ! Regrid to CAM physics mesh!
         call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
