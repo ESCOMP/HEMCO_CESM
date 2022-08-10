@@ -672,10 +672,10 @@ contains
 
                 ! Converted-to-Olson land fractions [1] (hplin, 8/10/22)
                 if(ExtState%FROCEAN%DoUse) then
-                    State_CAM_FROCEAN(I) = cam_in%ocnFrac(J) + cam_in%iceFrac(J)
+                    State_CAM_FROCEAN(I) = cam_in(lchnk)%ocnFrac(J) + cam_in(lchnk)%iceFrac(J)
                 endif
                 if(ExtState%FRSEAICE%DoUse) then
-                    State_CAM_FRSEAICE(I) = cam_in%iceFrac(J)
+                    State_CAM_FRSEAICE(I) = cam_in(lchnk)%iceFrac(J)
                 endif
 
                 ! J-values (from CESM-GC only, at the moment. Added to CAM-chem/mozart 5/16/21)
