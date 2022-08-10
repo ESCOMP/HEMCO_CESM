@@ -82,15 +82,18 @@ module hco_cam_convert_state_mod
 !  
 !  ALBD
 !  F_OF_PBL
+!  FROCEAN, FRSEAICE (added 8/10/22)
 !  HNO3
 !  NO, NO2
 !  O3
 !  PBLH
 !  PSFC
+!  QV2M (added 8/10/22)
 !  SUNCOS
 !  T2M
 !  TK
 !  TSKIN
+!  USTAR (added 8/10/22)
 !  U10M
 !  V10M
 !
@@ -111,6 +114,7 @@ module hco_cam_convert_state_mod
 !  15 Dec 2020 - H.P. Lin    - Initial version
 !  04 Feb 2021 - H.P. Lin    - Add State_GC_* for some GC-specific intermediate qtys
 !  07 May 2021 - H.P. Lin    - Add state fluxes on CAM grid for deposition computation
+!  10 Aug 2022 - H.P. Lin    - Update quantities QV2M, USTAR, FROCEAN, FRSEAICE
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -132,6 +136,7 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_V10M(:)
     real(r8), pointer, public        :: State_CAM_ALBD(:)
     real(r8), pointer, public        :: State_CAM_LWI(:)
+    real(r8), pointer, public        :: State_CAM_USTAR(:)
 
     real(r8), pointer, public        :: State_CAM_CSZA(:)
 
@@ -182,6 +187,7 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_V10M(:,:)
     real(r8), pointer, public        :: State_HCO_ALBD(:,:)
     real(r8), pointer, public        :: State_HCO_WLI(:,:)
+    real(r8), pointer, public        :: State_HCO_USTAR(:,:)
     real(r8), pointer, public        :: State_HCO_F_OF_PBL(:,:,:)
 
     real(r8), pointer, public        :: State_HCO_CSZA(:,:)
@@ -314,6 +320,8 @@ contains
         ASSERT_(RC==0)
         allocate(State_CAM_LWI  (my_CE), stat=RC)
         ASSERT_(RC==0)
+        allocate(State_CAM_USTAR(my_CE), stat=RC)
+        ASSERT_(RC==0)
         allocate(State_CAM_CSZA (my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_FROCEAN(my_CE), stat=RC)
@@ -392,6 +400,7 @@ contains
         State_HCO_U10M(:,:) = 0.0_r8
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
+        State_HCO_USTAR(:,:) = 0.0_r8
         State_HCO_WLI(:,:) = 0.0_r8
         State_HCO_CSZA(:,:) = 0.0_r8
         State_HCO_F_OF_PBL(:,:,:) = 0.0_r8
@@ -414,6 +423,7 @@ contains
         State_CAM_JNO2(:) = 0.0_r8
         State_CAM_JOH (:) = 0.0_r8
         State_CAM_QV2M(:) = 0.0_r8
+        State_CAM_USTAR(:) = 0.0_r8
 
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
@@ -654,6 +664,9 @@ contains
 
                 ! COSZA Cosine of zenith angle [1]
                 State_CAM_CSZA(I) = lchnk_zenith(J)
+
+                ! USTAR Friction velocity [m/s]
+                State_CAM_USTAR(I) = cam_in(lchnk)%fv(J) * cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%uStar(J) * (1.0_r8 - cam_in(lchnk)%landFrac(J))
 
                 ! Sea level pressure [Pa] (note difference in units!!)
                 State_CAM_ps(I) = phys_state(lchnk)%ps(J)
@@ -903,6 +916,14 @@ contains
 
             call ExtDat_Set(HcoState, ExtState%ALBD,  'ALBD_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_ALBD)
+        endif
+
+        ! Friction velocity
+        if(ExtState%USTAR%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_USTAR, State_HCO_USTAR)
+
+            call ExtDat_Set(HcoState, ExtState%USTAR, 'USTAR_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_USTAR)
         endif
 
         ! Air mass [kg]
