@@ -157,11 +157,12 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_chmETNO3(:)
     real(r8), pointer, public        :: State_CAM_chmMOH(:)
 
-
-
     ! J-values from chemistry (2-D only, on surface)
     real(r8), pointer, public        :: State_CAM_JNO2(:)
     real(r8), pointer, public        :: State_CAM_JOH (:)
+
+    ! Q at 2m [kg H2O/kg air]
+    real(r8), pointer, public        :: State_CAM_QV2M(:)
 
     !------------------------------------------------------------------
     ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
@@ -198,6 +199,13 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_JNO2(:,:)
     real(r8), pointer, public        :: State_HCO_JOH (:,:)
 
+
+    real(r8), pointer, public        :: State_HCO_QV2M(:,:)
+
+    ! constituent indices:
+    integer                          :: id_O3, id_NO, id_NO2, id_HNO3
+    integer                          :: id_H2O, id_Q
+    integer                          :: id_DMS, id_ACET, id_ALD2, id_MENO3, id_ETNO3, id_MOH
 
 contains
 !EOC
@@ -294,6 +302,7 @@ contains
         allocate(State_HCO_TK(my_IM, my_JM, LM), stat=RC)
         ASSERT_(RC==0)
 
+
         ! For HEMCO extensions...
         allocate(State_CAM_TS   (my_CE), stat=RC)
         ASSERT_(RC==0)
@@ -310,6 +319,13 @@ contains
         allocate(State_CAM_FROCEAN(my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_FRSEAICE(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        ! QV2M
+        allocate(State_CAM_QV2M(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_HCO_QV2M(my_IM, my_JM), stat=RC)
         ASSERT_(RC==0)
 
         ! Constituents
@@ -386,6 +402,8 @@ contains
         State_HCO_chmNO2(:,:,:) = 0.0_r8
         State_HCO_chmHNO3(:,:,:) = 0.0_r8
 
+        State_HCO_QV2M(:,:) = 0.0_r8
+
         State_CAM_chmDMS(:) = 0.0_r8
         State_CAM_chmACET(:) = 0.0_r8
         State_CAM_chmALD2(:) = 0.0_r8
@@ -395,6 +413,7 @@ contains
 
         State_CAM_JNO2(:) = 0.0_r8
         State_CAM_JOH (:) = 0.0_r8
+        State_CAM_QV2M(:) = 0.0_r8
 
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
@@ -495,10 +514,6 @@ contains
         ! pbuf indices:
         integer                      :: index_pblh, index_JNO2, index_JOH
 
-        ! constituent indices:
-        integer                      :: id_O3, id_NO, id_NO2, id_HNO3
-        integer                      :: id_DMS, id_ACET, id_ALD2, id_MENO3, id_ETNO3, id_MOH
-
         ! Temporary geographical indices, allocated to max size (pcols)
         ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
         real(r8)                     :: lchnk_rlats(1:pcols), lchnk_rlons(1:pcols)
@@ -549,6 +564,10 @@ contains
         call cnst_get_ind('NO2', id_NO2)
         call cnst_get_ind('HNO3', id_HNO3)
 
+        ! Get constitutent index for specific humidity
+        call cnst_get_ind('Q', id_Q)
+        call cnst_get_ind('H2O', id_H2O)
+
         ! Retrieve optional - for deposition - constituent IDs
         call cnst_get_ind('DMS', id_DMS, abort=.False.)
         call cnst_get_ind('MENO3', id_MENO3, abort=.False.)
@@ -565,8 +584,6 @@ contains
         if(id_MOH <= 0) then
             call cnst_get_ind('CH3OH', id_MOH, abort=.False.)
         endif
-
-        ! if(masterproc) write(iulog,*) "hplin fixme: O3, NO, NO2, HNO3", id_O3, id_NO, id_NO2, id_HNO3
 
         ! Phase 1: Store the fields in hemco_interface (copy)
         I = 0
@@ -626,6 +643,11 @@ contains
 
                 ! DEBUG: Write to CSZA as a test for latitude to make sure we are doing correctly
                 ! State_CAM_CSZA(I) = lchnk_rlats(J)
+
+                ! QV2M [kg H2O/kg air] (MMR -- this is converted to VMR by *MWdry/18 in SeaSalt)
+                ! at 2M, roughly surface ~ LM (1 is TOA)
+                ! (hplin, 8/10/22)
+                State_CAM_QV2M(I) = phys_state(lchnk)%q(J,LM,id_Q)
 
                 ! PBLH [m]
                 State_CAM_pblh(I) = pbuf_tmp_pblh(J)
@@ -909,6 +931,14 @@ contains
 
             call ExtDat_Set(HcoState, ExtState%NO,   'HEMCO_NO_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_chmNO)
+        endif
+
+        ! MMR of H2O at 2m [kg H2O/kg air] (2-D only)
+        if(ExtState%QV2M%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_QV2M, State_HCO_QV2M)
+
+            call ExtDat_Set(HcoState, ExtState%QV2M,  'QV2M_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_QV2M)
         endif
 
         ! hplin 3/3/21: Disabling HNO3 for now - not actually used by HEMCO,
