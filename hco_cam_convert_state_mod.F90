@@ -139,6 +139,10 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_AIRs  (:)
     real(r8), pointer, public        :: State_CAM_DELP_DRYs(:)
 
+    ! Land fractions (converted to Olson) from CAM - 1D
+    real(r8), pointer, public        :: State_CAM_FROCEAN  (:)
+    real(r8), pointer, public        :: State_CAM_FRSEAICE (:)
+
     ! Chem Constituents on CAM grid
     real(r8), pointer, public        :: State_CAM_chmO3 (:,:)
     real(r8), pointer, public        :: State_CAM_chmNO (:,:)
@@ -180,6 +184,9 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_F_OF_PBL(:,:,:)
 
     real(r8), pointer, public        :: State_HCO_CSZA(:,:)
+
+    real(r8), pointer, public        :: State_HCO_FROCEAN (:,:)
+    real(r8), pointer, public        :: State_HCO_FRSEAICE(:,:)
 
     ! Chem Constituents on HEMCO grid
     real(r8), pointer, public        :: State_HCO_chmO3 (:,:,:)
@@ -227,6 +234,7 @@ contains
 !
 ! !REVISION HISTORY:
 !  31 Mar 2020 - H.P. Lin    - Initial version
+!  10 Aug 2022 - H.P. Lin    - Update FROCEAN, FRSEAICE for HEMCO 3.4.0+
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -299,6 +307,10 @@ contains
         ASSERT_(RC==0)
         allocate(State_CAM_CSZA (my_CE), stat=RC)
         ASSERT_(RC==0)
+        allocate(State_CAM_FROCEAN(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_FRSEAICE(my_CE), stat=RC)
+        ASSERT_(RC==0)
 
         ! Constituents
         allocate(State_CAM_chmO3(LM, my_CE), stat=RC)
@@ -351,6 +363,8 @@ contains
 
         allocate(State_HCO_JOH (my_IM, my_JM), stat=RC)
         allocate(State_HCO_JNO2(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FROCEAN(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRSEAICE(my_IM, my_JM), stat=RC)
 
         ! Clear values
         State_HCO_AIR(:,:,:) = 0.0_r8
@@ -654,6 +668,14 @@ contains
                     if(cam_in(lchnk)%ocnFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%iceFrac(J))) then
                         State_CAM_LWI(I) = 0
                     endif
+                endif
+
+                ! Converted-to-Olson land fractions [1] (hplin, 8/10/22)
+                if(ExtState%FROCEAN%DoUse) then
+                    State_CAM_FROCEAN(I) = cam_in%ocnFrac(J) + cam_in%iceFrac(J)
+                endif
+                if(ExtState%FRSEAICE%DoUse) then
+                    State_CAM_FRSEAICE(I) = cam_in%iceFrac(J)
                 endif
 
                 ! J-values (from CESM-GC only, at the moment. Added to CAM-chem/mozart 5/16/21)
@@ -1005,6 +1027,18 @@ contains
             else
                 call endrun('hco_cam_convert_state_mod: requested J-values fields but J-value field unsupported, check chem or disable ParaNOx')
             endif
+        endif
+
+        if(ExtState%FROCEAN%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FROCEAN, State_HCO_FROCEAN)
+            call ExtDat_Set(HcoState, ExtState%FROCEAN,      'FROCEAN_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FROCEAN)
+        endif
+
+        if(ExtState%FRSEAICE%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FRSEAICE, State_HCO_FRSEAICE)
+            call ExtDat_Set(HcoState, ExtState%FRSEAICE,     'FRSEAICE_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRSEAICE)
         endif
 
         if(FIRST) then
