@@ -377,6 +377,7 @@ contains
         allocate(State_HCO_ALBD(my_IM, my_JM), stat=RC)
         allocate(State_HCO_WLI(my_IM, my_JM), stat=RC)
         allocate(State_HCO_CSZA(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_USTAR(my_IM, my_JM), stat=RC)
         allocate(State_HCO_F_OF_PBL(my_IM, my_JM, LM), stat=RC)
         allocate(State_GC_DELP_DRY(my_IM, my_JM, LM), stat=RC)
 
@@ -928,6 +929,9 @@ contains
 
         ! Air mass [kg]
         if(ExtState%AIR%DoUse) then
+            ! This is computed above using GC routines for air quantities, so
+            ! it does not necessitate a regrid from CAM.
+
             call ExtDat_Set(HcoState, ExtState%AIR,   'AIRMASS_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_AIR)
         endif
