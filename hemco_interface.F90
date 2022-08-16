@@ -1301,10 +1301,13 @@ contains
 
         logical, save                :: FIRST = .True.
         logical                      :: doExport = .False.
+        integer, save                :: nCalls = 0
 
         ! Assume success
         RC = ESMF_SUCCESS
         HMRC = HCO_SUCCESS
+
+        nCalls = nCalls + 1
 
         !-----------------------------------------------------------------------
         ! Update regridding file handles as necessary
@@ -1404,7 +1407,7 @@ contains
         !-----------------------------------------------------------------------
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=1)
 
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (1)"
         endif
 
@@ -1437,7 +1440,7 @@ contains
         !-----------------------------------------------------------------------
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=2)
 
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (2)"
 
             ! As a test... maybe we also need to flip in the vertical
@@ -1527,7 +1530,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCOX_Run"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCOX_Run"
 
 
         !-----------------------------------------------------------------------
@@ -1540,7 +1543,7 @@ contains
         call HcoDiagn_AutoUpdate(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
 
         !-----------------------------------------------------------------------
         ! Tell HEMCO we are done for this timestep...
@@ -1548,7 +1551,7 @@ contains
         call HcoClock_EmissionsDone(HcoState%Clock, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
 
         !-----------------------------------------------------------------------
         ! Do some testing and write emissions to the tape
@@ -2258,7 +2261,7 @@ contains
             endif
             Ptr2D => NULL()
             
-            if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
+            if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
         endif
 
         ! dummy_0_CAM(:,:) = iam * 1.0_r8
@@ -2272,44 +2275,45 @@ contains
         !            size(State_CAM_ps, 1), my_CE, pver
 
         dummy_0_CAM(:,:) = 0.0_r8
-        dummy_0_CAM(1,:) = State_CAM_TS
-        dummy_0_CAM(2,:) = State_CAM_U10M
-        dummy_0_CAM(3,:) = State_CAM_V10M
-        dummy_0_CAM(4,:) = State_CAM_ALBD
-        dummy_0_CAM(5,:) = State_CAM_LWI
-        dummy_0_CAM(6,:) = State_CAM_ps
-        dummy_0_CAM(7,:) = State_CAM_pblh
-        dummy_0_CAM(8,:) = State_CAM_CSZA
-        dummy_0_CAM(9,:) = State_CAM_psdry
-        dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
-        dummy_0_CAM(11,:) = State_CAM_JNO2
-        dummy_0_CAM(12,:) = State_CAM_JOH
+        ! dummy_0_CAM(1,:) = State_CAM_TS
+        ! dummy_0_CAM(2,:) = State_CAM_U10M
+        ! dummy_0_CAM(3,:) = State_CAM_V10M
+        ! dummy_0_CAM(4,:) = State_CAM_ALBD
+        ! dummy_0_CAM(5,:) = State_CAM_LWI
+        ! dummy_0_CAM(6,:) = State_CAM_ps
+        ! dummy_0_CAM(7,:) = State_CAM_pblh
+        ! dummy_0_CAM(8,:) = State_CAM_CSZA
+        ! dummy_0_CAM(9,:) = State_CAM_psdry
+        ! dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
+        ! dummy_0_CAM(11,:) = State_CAM_JNO2
+        ! dummy_0_CAM(12,:) = State_CAM_JOH
         ! dummy_0_CAM(13,:) = scratchFldCAM2
 
         ! fill with some test data, but clean the data first!
-        dummy_1(:,:,:) = 0.0_r8
-        dummy_1(:,:,1) = State_HCO_TS
-        dummy_1(:,:,2) = State_HCO_U10M
-        dummy_1(:,:,3) = State_HCO_V10M
-        dummy_1(:,:,4) = State_HCO_ALBD
-        dummy_1(:,:,5) = State_HCO_WLI
-        dummy_1(:,:,6) = State_HCO_PSFC
-        dummy_1(:,:,7) = State_HCO_PBLH
-        dummy_1(:,:,8) = State_HCO_CSZA
-        dummy_1(:,:,9) = State_HCO_AIR(:,:,1)
-        dummy_1(:,:,10) = State_HCO_AIR(:,:,2)
-        dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
-        dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
-        dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
+        !dummy_1(:,:,:) = 0.0_r8
+        dummy_1_CAM(:,:) = 0.0_r8
+        ! dummy_1(:,:,1) = State_HCO_TS
+        ! dummy_1(:,:,2) = State_HCO_U10M
+        ! dummy_1(:,:,3) = State_HCO_V10M
+        ! dummy_1(:,:,4) = State_HCO_ALBD
+        ! dummy_1(:,:,5) = State_HCO_WLI
+        ! dummy_1(:,:,6) = State_HCO_PSFC
+        ! dummy_1(:,:,7) = State_HCO_PBLH
+        ! dummy_1(:,:,8) = State_HCO_CSZA
+        ! dummy_1(:,:,9) = State_HCO_AIR(:,:,1)
+        ! dummy_1(:,:,10) = State_HCO_AIR(:,:,2)
+        ! dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
+        ! dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
+        ! dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
 
-        dummy_1(:,:,14) = HcoState%Grid%BXHEIGHT_M%Val(:,:,1)
-        dummy_1(:,:,15) = HcoState%Grid%BXHEIGHT_M%Val(:,:,2)
-        dummy_1(:,:,16) = State_HCO_F_OF_PBL(:,:,1)
-        dummy_1(:,:,17) = State_HCO_F_OF_PBL(:,:,2)
+        ! dummy_1(:,:,14) = HcoState%Grid%BXHEIGHT_M%Val(:,:,1)
+        ! dummy_1(:,:,15) = HcoState%Grid%BXHEIGHT_M%Val(:,:,2)
+        ! dummy_1(:,:,16) = State_HCO_F_OF_PBL(:,:,1)
+        ! dummy_1(:,:,17) = State_HCO_F_OF_PBL(:,:,2)
         ! dummy_1(:,:,18) = dummy_2(:,:)
 
         ! Regrid to CAM physics mesh!
-        call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
+        !call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
 
         ! Write to history on CAM mesh
         !call HCO_Export_History_CAM3D("DIAG_HCO_TEST", dummy_1_CAM)
