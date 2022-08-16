@@ -262,9 +262,9 @@ contains
         RC = ESMF_SUCCESS
 
         ! Sanity check
-        if(masterproc) then
-            write(iulog,*) "> HCOI_Allocate_All entering"
-        endif
+        !if(masterproc) then
+        !    write(iulog,*) "> HCOI_Allocate_All entering"
+        !endif
 
         ! PBL height [m]
         ! Comes from pbuf
@@ -727,11 +727,12 @@ contains
 
         if(FIRST) then
             FIRST = .false.
+
+            if(masterproc) then
+                write(iulog,*) "> CAM_GetBefore_HCOI finished"
+            endif
         endif
-        
-        if(masterproc) then
-            write(iulog,*) "> CAM_GetBefore_HCOI finished"
-        endif
+
     end subroutine CAM_GetBefore_HCOI
 !EOC
 !------------------------------------------------------------------------------
@@ -807,6 +808,7 @@ contains
         integer                      :: RC                   ! ESMF return code
 
         logical, save                :: FIRST = .true.
+        integer, save                :: nCalls = 0
 
         integer                      :: I, J, L              ! Loop index
 
@@ -822,7 +824,9 @@ contains
         ! Assume success
         RC = ESMF_SUCCESS
 
-        if(masterproc) then
+        nCalls = nCalls + 1
+
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "> CAM_RegridSet_HCOI entering", phase
         endif
 
@@ -1100,7 +1104,7 @@ contains
             FIRST = .false.
         endif
         
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "> CAM_RegridSet_HCOI finished"
         endif
 
