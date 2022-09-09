@@ -540,7 +540,7 @@ contains
         ! Assume success
         RC = ESMF_SUCCESS
 
-        if(masterproc) then
+        if(masterproc .and. FIRST) then
             write(iulog,*) "> CAM_GetBefore_HCOI entering"
         endif
 
@@ -561,7 +561,7 @@ contains
         ! Set feature flag
         feat_JValues = index_JNO2 > 0
 
-        if(masterproc) write(iulog,*) "feat_JValues:", feat_JValues
+        if(masterproc .and. FIRST) write(iulog,*) "feat_JValues:", feat_JValues
 
         ! Get calday for cosza (current time, not midpoint of dt)
         calday = get_curr_calday()
@@ -888,9 +888,9 @@ contains
             call ExtDat_Set(HcoState, ExtState%T2M,  'T2M_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_TS)
         
-            if(masterproc) then
-                write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
-            endif
+            ! if(masterproc) then
+            !     write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
+            ! endif
         endif
 
         ! 10M E/W and N/S wind speed [m/s] (fixme: use pver?)
