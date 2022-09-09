@@ -577,7 +577,8 @@ contains
 
         ! Get constitutent index for specific humidity
         call cnst_get_ind('Q', id_Q)
-        call cnst_get_ind('H2O', id_H2O)
+        ! call cnst_get_ind('H2O', id_H2O)
+        ! id_H2O not used for now, and also not present in CAM-chem. hplin, 9/9/22
 
         ! Retrieve optional - for deposition - constituent IDs
         call cnst_get_ind('DMS', id_DMS, abort=.False.)
@@ -840,7 +841,7 @@ contains
             call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH   )
             call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK     )
 
-            if(masterproc) then
+            if(masterproc .and. nCalls < 10) then
                 write(iulog,*) "> CAM_RegridSet_HCOI exiting phase 1"
             endif
 

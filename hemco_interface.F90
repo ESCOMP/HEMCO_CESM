@@ -1495,7 +1495,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
 
         call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
@@ -1511,7 +1511,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
 
         !-----------------------------------------------------------------------
         ! Run HEMCO Extensions!
