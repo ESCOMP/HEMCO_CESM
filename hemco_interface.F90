@@ -1755,8 +1755,6 @@ contains
         
         if(chem_is('GEOS-Chem')) then
             if(masterproc) write(iulog,*) "HEMCO_CESM: starting exports to GEOS-Chem"
-            ! Temporarily disable offline landtypes
-#if defined( HEMCO_CESM_OFFL_LT )            
             do N = 0, 72
                 ! Assume success
                 HMRC = HCO_SUCCESS
@@ -1801,7 +1799,6 @@ contains
                 endif
                 Ptr2D => NULL()
             enddo
-#endif
 
             ! VMR_CH3CL
             write(exportNameTmp, '(a)') 'VMR_CH3CL'
