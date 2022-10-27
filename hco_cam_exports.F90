@@ -291,7 +291,8 @@ contains
 !
         use cam_history,              only: hist_fld_active, outfld
         use ppgrid,                   only: pcols, pver
-        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use phys_grid,                only: get_ncols_p
+        use ppgrid,                   only: begchunk, endchunk
 
         use spmd_utils,               only: iam, masterproc
 !
@@ -378,7 +379,8 @@ contains
 !
         use cam_history,              only: hist_fld_active, outfld
         use ppgrid,                   only: pcols
-        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use phys_grid,                only: get_ncols_p
+        use ppgrid,                   only: begchunk, endchunk
 
         use spmd_utils,               only: iam, masterproc
 !
@@ -610,7 +612,8 @@ contains
 ! !USES:
 !
         use ppgrid,                   only: pcols, pver
-        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use phys_grid,                only: get_ncols_p
+        use ppgrid,                   only: begchunk, endchunk
         use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
 
         use spmd_utils,               only: iam, masterproc
@@ -717,7 +720,8 @@ contains
 ! !USES:
 !
         use ppgrid,                   only: pcols, pver
-        use phys_grid,                only: begchunk, endchunk, get_ncols_p
+        use phys_grid,                only: get_ncols_p
+        use ppgrid,                   only: begchunk, endchunk
         use physics_buffer,           only: pbuf_get_chunk, pbuf_get_field, pbuf_get_index
 
         use spmd_utils,               only: iam, masterproc

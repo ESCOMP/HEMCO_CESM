@@ -18,7 +18,7 @@ The forked repository contains `[hemco]` as an external to be deployed inside CA
 
 ## License
 ```
-Copyright (c) 2019-2020, Haipeng Lin and Harvard University Atmospheric Chemistry Modeling Group.
+Copyright (c) 2019-2022, Haipeng Lin and Harvard University Atmospheric Chemistry Modeling Group.
 All rights reserved.
 
 This library is free software; you can redistribute it and/or
