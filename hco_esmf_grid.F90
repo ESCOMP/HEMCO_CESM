@@ -737,7 +737,8 @@ contains
         use spmd_utils,         only: iam
         use spmd_utils,         only: masterproc
 
-        use phys_grid,          only: begchunk, endchunk, get_ncols_p
+        use phys_grid,          only: get_ncols_p
+        use ppgrid,             only: begchunk, endchunk
 
         use cam_instance,       only: atm_id
 
