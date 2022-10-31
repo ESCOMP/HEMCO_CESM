@@ -129,6 +129,10 @@ module hemco_interface
     type(HCO_State), pointer, public :: HcoState  => NULL()
     type(Ext_State), pointer, public :: ExtState  => NULL()
 
+    ! HEMCO internal grid parameters
+    integer                          :: HcoGridIM           ! # of lons
+    integer                          :: HcoGridJM           ! # of lats
+
     ! Last execution times for the HEMCO component. We are assuming that time
     ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
     integer                          :: last_HCO_day, last_HCO_second
@@ -177,8 +181,9 @@ contains
         integer :: unitn, ierr
         character(len=*), parameter  :: subname = 'hemco_readnl'
         character(len=256)           :: hemco_config_file = 'HEMCO_Config.rc'
+        integer                      :: hemco_grid_xdim, hemco_grid_ydim
 
-        namelist /hemco_nl/ hemco_config_file
+        namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim
 
         ! Read namelist on master proc
         ! ...
@@ -197,13 +202,18 @@ contains
             call freeunit(unitn)
 
             write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
+            write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
         endif
 
         ! MPI Broadcast Namelist variables
         call mpi_bcast(hemco_config_file, len(hemco_config_file), mpi_character, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_grid_xdim, 1, mpi_integer, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_grid_ydim, 1, mpi_integer, masterprocid, mpicom, ierr)
 
         ! Save this to the module information
         HcoConfigFile = hemco_config_file
+        HcoGridIM     = hemco_grid_xdim
+        HcoGridJM     = hemco_grid_ydim
     end subroutine hemco_readnl
 !EOC
 !------------------------------------------------------------------------------
@@ -305,7 +315,8 @@ contains
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
-            write(iulog,*) "HEMCO_CAM interface version 0.3"
+            write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
+            write(iulog,*) "HEMCO_CAM interface version 1.0"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -366,24 +377,33 @@ contains
         !-----------------------------------------------------------------------
         ! Setup a lat-lon "HEMCO" intermediate grid
         !-----------------------------------------------------------------------
-
-        ! TODO: For now, hardcode using 1x1 grid for testing with fv0.9x1.25.
-        ! This provides a sufficient # of grid boxes acceptable for decomp
-        ! on the default Cheyenne configuration. (hplin, 2/21/20)
-
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
 
+        ! The number of grid dimensions can be specified in atm namelist for
+        ! hemco_grid_xdim, hemco_grid_ydim. note that half-sized polar boxes are made
+        ! so increase the y-dim by one.
         ! 288x201 = 0.9x1.25
         ! 144x91  = 2.0x2.5
-        ! 
-        call HCO_Grid_Init (IM_in = 288, JM_in = 201, nPET_in = npes, RC=RC)
+
+        ! Verify that the grid is in a reasonable state
+        if(HcoGridIM .le. 1 .or. HcoGridJM .le. 1) then
+            call endrun("Invalid HEMCO grid parameters - too small - in &hemco namelist. Specify hemco_grid_xdim and hemco_grid_ydim as # of grid boxes in each dimension")
+        endif
+
+        if(mod(HcoGridJM, 2) .ne. 1) then
+            call endrun("Invalid HEMCO grid parameters - hemco_grid_ydim needs to be odd - in &hemco namelist. This is because y-dim has half-sized polar boxes.")
+        endif
+
+        ! Initialize the HEMCO intermediate grid
+        call HCO_Grid_Init (IM_in = HcoGridIM, JM_in = HcoGridJM, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        !if(masterproc) then
-        !    write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
-        !    write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
-        !endif
+        if(masterproc) then
+            write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
+            write(iulog,*) "> Global Dimensions: ", HcoGridIM, HcoGridJM, LM
+            write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
+        endif
 
         !-----------------------------------------------------------------------
         ! Update HEMCO regrid descriptors for the first time.
