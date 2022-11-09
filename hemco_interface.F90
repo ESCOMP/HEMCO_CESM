@@ -181,7 +181,8 @@ contains
         integer :: unitn, ierr
         character(len=*), parameter  :: subname = 'hemco_readnl'
         character(len=256)           :: hemco_config_file = 'HEMCO_Config.rc'
-        integer                      :: hemco_grid_xdim, hemco_grid_ydim
+        integer                      :: hemco_grid_xdim = 0
+        integer                      :: hemco_grid_ydim = 0
 
         namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim
 
@@ -316,7 +317,7 @@ contains
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CAM interface version 1.0"
+            write(iulog,*) "HEMCO_CAM interface version 1.0.1"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
