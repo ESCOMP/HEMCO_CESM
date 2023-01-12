@@ -2224,6 +2224,8 @@ contains
         ! the CAM_DistGrid and CAM_PhysMesh maneuvers here and do this in
         ! HCO_ESMF_Grid::HCO_Grid_ESMF_CreateCAM instead.
 
+        RC = ESMF_SUCCESS
+
     end subroutine HCO_GC_Init
 
     ! Finalize Gridded Component
@@ -2242,6 +2244,9 @@ contains
 
         ! call ESMF_MeshDestroy(CAM_PhysMesh, rc=RC)
         ! ASSERT_(RC==ESMF_SUCCESS)
+
+        RC = ESMF_SUCCESS
+
     end subroutine HCO_GC_Final
 
     subroutine HCO_GC_SetServices(GC, RC)
