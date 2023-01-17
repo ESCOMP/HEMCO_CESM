@@ -510,9 +510,11 @@ contains
             ! as 2-D. This scan is somewhat intensive as it uses get_extfrc_ndx
             ! which loops through extcnt in extfrc_lst.
             IsExtfrc3DEmis = (get_extfrc_ndx(trim(HcoConfig%ModelSpc(N)%SpcName)) .gt. 0)
+
+            if(masterproc) write(iulog,*) "Setting up HEMCO exportName " // trim(exportName), IsExtfrc3DEmis
             if(IsExtfrc3DEmis) then
                 ! 3-D emissions are supported
-                HcoConfig%ModelSpc(N)%SpcName%DimMax = 3
+                HcoConfig%ModelSpc(N)%DimMax = 3
 
                 exportDesc = "HEMCO 3-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
                 call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
@@ -521,7 +523,7 @@ contains
                 call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 3, hcoID=N)
             else
                 ! 2-D emissions only
-                HcoConfig%ModelSpc(N)%SpcName%DimMax = 2
+                HcoConfig%ModelSpc(N)%DimMax = 2
 
                 exportDesc = "HEMCO 2-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
                 call addfld(exportName, horiz_only, 'I', 'kg/m2/s',          &
