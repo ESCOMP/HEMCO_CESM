@@ -931,10 +931,12 @@ contains
 !
         use cam_logfile,      only: iulog
         use spmd_utils,       only: masterproc
-
 !
 ! !REVISION HISTORY:
 !  14 Dec 2020 - H.P. Lin    - Initial version
+!  16 Jan 2023 - H.P. Lin    - Need to reset this after pbuf fields are now 3-D or 2-D.
+!                              Approximately 16 hours of debugging stack corruptions
+!                              were needed to realize I wrote this routine.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -945,15 +947,23 @@ contains
         integer                      :: RC                   ! ESMF return code
 
         integer                      :: spcID
-        real(ESMF_KIND_R8)           :: zeroFldCAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)           :: zeroFldCAM_3D(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)           :: zeroFldCAM_2D(1:my_CE)
 
         ! Zero out quantities first
-        zeroFldCAM(:,:)   = 0.0_r8
+        zeroFldCAM_3D(:,:)   = 0.0_r8
+        zeroFldCAM_2D(:  )   = 0.0_r8
 
         ! Reset for each species
         do spcID = 1, HcoConfig%nModelSpc
             ! Write to physics buffer (pass model name)
-            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM)
+            if(HcoConfig%ModelSpc(spcId%DimMax) .eq. 3) then
+                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_3D)
+            elseif(HcoConfig%ModelSpc(spcId%DimMax) .eq. 2) then
+                call HCO_Export_Pbuf_CAM2D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_2D)
+            else
+                ASSERT_(.false.)
+            endif
         enddo
 
     end subroutine HCOI_Initialize_Pbuf
