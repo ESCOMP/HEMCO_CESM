@@ -957,9 +957,9 @@ contains
         ! Reset for each species
         do spcID = 1, HcoConfig%nModelSpc
             ! Write to physics buffer (pass model name)
-            if(HcoConfig%ModelSpc(spcId%DimMax) .eq. 3) then
+            if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
                 call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_3D)
-            elseif(HcoConfig%ModelSpc(spcId%DimMax) .eq. 2) then
+            elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
                 call HCO_Export_Pbuf_CAM2D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_2D)
             else
                 ASSERT_(.false.)
