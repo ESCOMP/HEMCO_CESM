@@ -107,6 +107,8 @@ module hco_cam_convert_state_mod
 !  STUBS
 !  ----------------------------------------------------------------------------
 !  GWETTOP = 0
+!  FRLANDIC = 0
+!  FRLAKE = 0
 !
 !  Disabled: AIRVOL
 !
@@ -115,6 +117,7 @@ module hco_cam_convert_state_mod
 !  04 Feb 2021 - H.P. Lin    - Add State_GC_* for some GC-specific intermediate qtys
 !  07 May 2021 - H.P. Lin    - Add state fluxes on CAM grid for deposition computation
 !  10 Aug 2022 - H.P. Lin    - Update quantities QV2M, USTAR, FROCEAN, FRSEAICE
+!  20 Jan 2023 - H.P. Lin    - Remove WLI for HEMCO 3.6.0+; add FRLAND.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -135,7 +138,6 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_U10M(:)
     real(r8), pointer, public        :: State_CAM_V10M(:)
     real(r8), pointer, public        :: State_CAM_ALBD(:)
-    real(r8), pointer, public        :: State_CAM_LWI(:)
     real(r8), pointer, public        :: State_CAM_USTAR(:)
 
     real(r8), pointer, public        :: State_CAM_CSZA(:)
@@ -145,6 +147,7 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_DELP_DRYs(:)
 
     ! Land fractions (converted to Olson) from CAM - 1D
+    real(r8), pointer, public        :: State_CAM_FRLAND   (:)
     real(r8), pointer, public        :: State_CAM_FROCEAN  (:)
     real(r8), pointer, public        :: State_CAM_FRSEAICE (:)
 
@@ -186,14 +189,16 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_U10M(:,:)
     real(r8), pointer, public        :: State_HCO_V10M(:,:)
     real(r8), pointer, public        :: State_HCO_ALBD(:,:)
-    real(r8), pointer, public        :: State_HCO_WLI(:,:)
     real(r8), pointer, public        :: State_HCO_USTAR(:,:)
     real(r8), pointer, public        :: State_HCO_F_OF_PBL(:,:,:)
 
     real(r8), pointer, public        :: State_HCO_CSZA(:,:)
 
+    real(r8), pointer, public        :: State_HCO_FRLAND  (:,:)
+    real(r8), pointer, public        :: State_HCO_FRLANDIC(:,:)
     real(r8), pointer, public        :: State_HCO_FROCEAN (:,:)
     real(r8), pointer, public        :: State_HCO_FRSEAICE(:,:)
+    real(r8), pointer, public        :: State_HCO_FRLAKE  (:,:)
 
     ! Chem Constituents on HEMCO grid
     real(r8), pointer, public        :: State_HCO_chmO3 (:,:,:)
@@ -318,11 +323,11 @@ contains
         ASSERT_(RC==0)
         allocate(State_CAM_ALBD (my_CE), stat=RC)
         ASSERT_(RC==0)
-        allocate(State_CAM_LWI  (my_CE), stat=RC)
-        ASSERT_(RC==0)
         allocate(State_CAM_USTAR(my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_CSZA (my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_FRLAND(my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_FROCEAN(my_CE), stat=RC)
         ASSERT_(RC==0)
@@ -375,7 +380,6 @@ contains
         allocate(State_HCO_U10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_V10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_ALBD(my_IM, my_JM), stat=RC)
-        allocate(State_HCO_WLI(my_IM, my_JM), stat=RC)
         allocate(State_HCO_CSZA(my_IM, my_JM), stat=RC)
         allocate(State_HCO_USTAR(my_IM, my_JM), stat=RC)
         allocate(State_HCO_F_OF_PBL(my_IM, my_JM, LM), stat=RC)
@@ -388,8 +392,11 @@ contains
 
         allocate(State_HCO_JOH (my_IM, my_JM), stat=RC)
         allocate(State_HCO_JNO2(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLAND(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLANDIC(my_IM, my_JM), stat=RC)
         allocate(State_HCO_FROCEAN(my_IM, my_JM), stat=RC)
         allocate(State_HCO_FRSEAICE(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLAKE(my_IM, my_JM), stat=RC)
 
         ! Clear values
         State_HCO_AIR(:,:,:) = 0.0_r8
@@ -402,7 +409,6 @@ contains
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
         State_HCO_USTAR(:,:) = 0.0_r8
-        State_HCO_WLI(:,:) = 0.0_r8
         State_HCO_CSZA(:,:) = 0.0_r8
         State_HCO_F_OF_PBL(:,:,:) = 0.0_r8
         State_GC_DELP_DRY(:,:,:) = 0.0_r8
@@ -428,6 +434,12 @@ contains
 
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
+
+        ! Unsupported fields in CESM are directly assigned to zero.
+        ! These, if ever available, will be updated along with chemistry.F90
+        ! under src/chemistry/geoschem. (hplin, 1/20/23)
+        State_HCO_FRLANDIC(:,:) = 0.0_r8
+        State_HCO_FRLAKE(:,:) = 0.0_r8
 
         ! Populate persistent values
         call HCO_Grid_HCO2CAM_2D(AREA_M2, State_CAM_AREAM2)
@@ -693,27 +705,23 @@ contains
                     State_CAM_ALBD(I) = cam_in(lchnk)%asdir(J)
                 endif
 
-                ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)
-                if(ExtState%WLI%DoUse) then
-                    ! assume land
-                    State_CAM_LWI(I) = 1
-
-                    if(cam_in(lchnk)%iceFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%ocnFrac(J))) then
-                        State_CAM_LWI(I) = 2
-                    endif
-
-                    if(cam_in(lchnk)%ocnFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%iceFrac(J))) then
-                        State_CAM_LWI(I) = 0
-                    endif
+                ! Converted-to-Olson land fractions [1] (hplin, 8/10/22)
+                if(ExtState%FRLAND%DoUse) then
+                    State_CAM_FRLAND(I) = cam_in(lchnk)%landFrac(J)
                 endif
 
-                ! Converted-to-Olson land fractions [1] (hplin, 8/10/22)
+                ! FRLANDIC unsupported
+
                 if(ExtState%FROCEAN%DoUse) then
                     State_CAM_FROCEAN(I) = cam_in(lchnk)%ocnFrac(J) + cam_in(lchnk)%iceFrac(J)
                 endif
+
                 if(ExtState%FRSEAICE%DoUse) then
                     State_CAM_FRSEAICE(I) = cam_in(lchnk)%iceFrac(J)
                 endif
+
+                ! FRLAKE unsupported
+                ! FRSNO unsupported
 
                 ! J-values (from CESM-GC only, at the moment. Added to CAM-chem/mozart 5/16/21)
                 if(feat_JValues .and. .not. FIRST) then
@@ -981,30 +989,6 @@ contains
         !                     RC,       FIRST,          State_HCO_chmHNO3)
         ! endif
 
-        ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)
-        if(ExtState%WLI%DoUse) then
-            ! warning: regrid integer values have unexpected consequences
-            call HCO_Grid_CAM2HCO_2D(State_CAM_LWI, State_HCO_WLI)
-
-            ! remap fractions to a rounded number ... hack for regridding integer values
-            do J = 1, my_JM
-                do I = 1, my_IM
-                    if(State_HCO_WLI(I,J) < 0.5) then
-                        State_HCO_WLI(I,J) = 0
-                    else
-                        if(State_HCO_WLI(I,J) < 1.5) then
-                            State_HCO_WLI(I,J) = 1
-                        else
-                            State_HCO_WLI(I,J) = 2
-                        endif
-                    endif
-                enddo
-            enddo
-
-            call ExtDat_Set(HcoState, ExtState%WLI,  'WLI_FOR_EMIS', &
-                            RC,       FIRST,         State_HCO_WLI)
-        endif
-
         !-------------------------------------------------------
         ! Compute the PBL fraction (on HEMCO grid) so we avoid an extra regrid.
         ! This code largely ported from GeosCore/pbl_mix_mod.F90
@@ -1089,6 +1073,18 @@ contains
             endif
         endif
 
+        if(ExtState%FRLAND%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FRLAND, State_HCO_FRLAND)
+            call ExtDat_Set(HcoState, ExtState%FRLAND,       'FRLAND_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLAND)
+        endif
+
+        if(ExtState%FRLANDIC%DoUse) then
+            ! Unsupported - State_HCO_FRLANDIC is always zero
+            call ExtDat_Set(HcoState, ExtState%FRLANDIC,     'FRLANDIC_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLANDIC)
+        endif
+
         if(ExtState%FROCEAN%DoUse) then
             call HCO_Grid_CAM2HCO_2D(State_CAM_FROCEAN, State_HCO_FROCEAN)
             call ExtDat_Set(HcoState, ExtState%FROCEAN,      'FROCEAN_FOR_EMIS', &
@@ -1099,6 +1095,12 @@ contains
             call HCO_Grid_CAM2HCO_2D(State_CAM_FRSEAICE, State_HCO_FRSEAICE)
             call ExtDat_Set(HcoState, ExtState%FRSEAICE,     'FRSEAICE_FOR_EMIS', &
                             RC,       FIRST,                 State_HCO_FRSEAICE)
+        endif
+
+        if(ExtState%FRLAKE%DoUse) then
+            ! Unsupported - State_HCO_FRLAKE is always zero
+            call ExtDat_Set(HcoState, ExtState%FRLAKE,       'FRLAKE_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLAKE)
         endif
 
         if(FIRST) then

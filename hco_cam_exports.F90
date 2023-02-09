@@ -590,7 +590,7 @@ contains
         endif
 
         ! Log
-        if(masterproc) write(iulog,*) "Added field " // trim(fldname_ns) // " to physpkg pbuf, idx", tmpidx, " spcID", spcID
+        if(masterproc) write(iulog,*) "Added field " // trim(fldname_ns) // " to physpkg pbuf, idx", tmpidx, "spcID", spcID, "dim'l", dims
 
     end subroutine HCO_Export_Pbuf_AddField
 !EOC
