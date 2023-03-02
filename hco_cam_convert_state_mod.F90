@@ -45,6 +45,9 @@ module hco_cam_convert_state_mod
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
     use shr_kind_mod,             only: r8 => shr_kind_r8
 
+    ! Physics buffer
+    use physics_buffer, only: pbuf_add_field, dtype_r8
+
     implicit none
     private
 
@@ -126,6 +129,9 @@ module hco_cam_convert_state_mod
 !
     ! Flag for supported features
     logical                          :: feat_JValues
+
+    ! Indices for reactions (rxt) and pbuf fields
+    integer                          :: index_rxt_jno2, index_rxt_joh, index_JNO2, index_JOH
 
     ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
     ! Arrays are flipped in order (k, i) for the regridder
@@ -497,7 +503,6 @@ contains
         ! CAM physics buffer (some fields are here and some are in phys state)
         use physics_buffer, only: pbuf_get_chunk, pbuf_get_field
         use physics_buffer, only: pbuf_get_index
-        use physics_buffer, only: pbuf_add_field, dtype_r8
 
         ! Time description and zenith angle data
         use orbit,          only: zenith
@@ -554,9 +559,6 @@ contains
 
         ! pbuf indices:
         integer                      :: index_pblh, index_JNO2, index_JOH
-
-        ! rxt indices:
-        integer                      :: index_rxt_jno2, index_rxt_joh
 
         ! Temporary geographical indices, allocated to max size (pcols)
         ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
