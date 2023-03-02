@@ -480,6 +480,7 @@ contains
         ! CAM physics buffer (some fields are here and some are in phys state)
         use physics_buffer, only: pbuf_get_chunk, pbuf_get_field
         use physics_buffer, only: pbuf_get_index
+        use physics_buffer, only: pbuf_add_field, dtype_r8
 
         ! Time description and zenith angle data
         use orbit,          only: zenith
@@ -491,6 +492,9 @@ contains
         ! Output and mpi
         use cam_logfile,    only: iulog
         use spmd_utils,     only: masterproc, mpicom, masterprocid, iam
+
+        ! Chemistry descriptor
+        use chemistry,      only: chem_is
 !
 ! !INPUT PARAMETERS:
 !
@@ -537,6 +541,9 @@ contains
         ! pbuf indices:
         integer                      :: index_pblh, index_JNO2, index_JOH
 
+        ! rxt indices:
+        integer                      :: index_rxt_jno2, index_rxt_joh
+
         ! Temporary geographical indices, allocated to max size (pcols)
         ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
         real(r8)                     :: lchnk_rlats(1:pcols), lchnk_rlons(1:pcols)
@@ -563,15 +570,27 @@ contains
         ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
         index_pblh = pbuf_get_index('pblh')
 
-        ! J-values - might be -1 if not existent (i.e. not in CESM-GC)
-        ! Note: Assuming they exist in pairs (if index_JNO2 exists, all do)
-        ! (hplin, 3/3/21)
-        index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
-        index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
-        RC = ESMF_SUCCESS ! dummy
+        if(chem_is('GEOS-Chem')) then
+            ! Assume all versions of GEOS-Chem chemistry in CESM support JNO2, JOH pass
+            ! In which case we do not initialize HCO_IN_JNO2, HCO_IN_JOH
+            index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
+            index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
+            feat_Jvalues = .true.
+        else
+            ! J-values - check if reactions exist in CAM-chem (not in CESM-GC)
+            ! used for passing NO2, OH J-values to the HEMCO ParaNOx ship plume extension
+            ! for computation of ship plume emissions per Vinken et al., 2011.
+            index_rxt_jno2 = get_rxt_ndx('jno2')
+            index_rxt_joh  = get_rxt_ndx('jo3_b')
 
-        ! Set feature flag
-        feat_JValues = index_JNO2 > 0
+            ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
+            feat_Jvalues = .false.
+            if(rxt_jno2_idx > 0 .and. rxt_joh_idx > 0) then
+                feat_Jvalues = .true.
+                call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
+                call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
+            endif
+        endif
 
         if(masterproc .and. FIRST) write(iulog,*) "feat_JValues:", feat_JValues
 
@@ -738,7 +757,7 @@ contains
             FIRST = .false.
 
             if(masterproc) then
-                write(iulog,*) "> CAM_GetBefore_HCOI finished"
+                write(iulog,*) "> CAM_GetBefore_HCOI finished, feat_JValues = ", feat_JValues
             endif
         endif
 
