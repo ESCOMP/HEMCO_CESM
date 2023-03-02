@@ -45,6 +45,9 @@ module hco_cam_convert_state_mod
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
     use shr_kind_mod,             only: r8 => shr_kind_r8
 
+    ! Physics buffer
+    use physics_buffer, only: pbuf_add_field, dtype_r8
+
     implicit none
     private
 
@@ -126,6 +129,9 @@ module hco_cam_convert_state_mod
 !
     ! Flag for supported features
     logical                          :: feat_JValues
+
+    ! Indices for reactions (rxt) and pbuf fields
+    integer                          :: index_rxt_jno2, index_rxt_joh, index_JNO2, index_JOH
 
     ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
     ! Arrays are flipped in order (k, i) for the regridder
@@ -228,7 +234,7 @@ contains
 ! !IROUTINE: HCOI_Allocate_All
 !
 ! !DESCRIPTION: HCOI\_Allocate\_All allocates temporary met fields for use in
-!  HEMCO.
+!  HEMCO and performs initialization of pbuf fields for interfacing with chem.
 !\\
 !\\
 ! !INTERFACE:
@@ -241,6 +247,10 @@ contains
         use spmd_utils,       only: masterproc
 
         use HCO_ESMF_Grid,    only: AREA_M2, HCO_Grid_HCO2CAM_2D
+
+        ! Chemistry descriptor
+        use chemistry,      only: chem_is
+        use mo_chem_utls,   only: get_rxt_ndx
 !
 ! !REMARKS:
 !  Fields are allocated here after initialization of the hco\_esmf\_grid.
@@ -254,6 +264,7 @@ contains
 ! !REVISION HISTORY:
 !  31 Mar 2020 - H.P. Lin    - Initial version
 !  10 Aug 2022 - H.P. Lin    - Update FROCEAN, FRSEAICE for HEMCO 3.4.0+
+!  02 Mar 2023 - H.P. Lin    - Move initialization of pbuf for JOH, JNO2 here
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -444,6 +455,18 @@ contains
         ! Populate persistent values
         call HCO_Grid_HCO2CAM_2D(AREA_M2, State_CAM_AREAM2)
 
+        ! Perform pbuf initialization for interfacing with CAM-chem (hplin, 3/2/23)
+        if(.not. chem_is('GEOS-Chem')) then
+            index_rxt_jno2 = get_rxt_ndx('jno2')
+            index_rxt_joh  = get_rxt_ndx('jo3_b')
+
+            ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
+            if(index_rxt_jno2 > 0 .and. index_rxt_joh > 0) then
+                call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
+                call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
+            endif
+        endif
+
     end subroutine HCOI_Allocate_All
 !EOC
 !------------------------------------------------------------------------------
@@ -563,15 +586,14 @@ contains
         ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
         index_pblh = pbuf_get_index('pblh')
 
-        ! J-values - might be -1 if not existent (i.e. not in CESM-GC)
-        ! Note: Assuming they exist in pairs (if index_JNO2 exists, all do)
-        ! (hplin, 3/3/21)
         index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
         index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
         RC = ESMF_SUCCESS ! dummy
+        feat_Jvalues = .false.
 
-        ! Set feature flag
-        feat_JValues = index_JNO2 > 0
+        if(index_JNO2 > 0 .and. index_JOH > 0) then
+            feat_Jvalues = .true.
+        endif
 
         if(masterproc .and. FIRST) write(iulog,*) "feat_JValues:", feat_JValues
 
@@ -738,7 +760,7 @@ contains
             FIRST = .false.
 
             if(masterproc) then
-                write(iulog,*) "> CAM_GetBefore_HCOI finished"
+                write(iulog,*) "> CAM_GetBefore_HCOI finished, feat_JValues = ", feat_JValues
             endif
         endif
 
