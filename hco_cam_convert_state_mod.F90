@@ -495,6 +495,7 @@ contains
 
         ! Chemistry descriptor
         use chemistry,      only: chem_is
+        use mo_chem_utls,   only: get_rxt_ndx
 !
 ! !INPUT PARAMETERS:
 !
@@ -585,7 +586,7 @@ contains
 
             ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
             feat_Jvalues = .false.
-            if(rxt_jno2_idx > 0 .and. rxt_joh_idx > 0) then
+            if(index_rxt_jno2 > 0 .and. index_rxt_joh > 0) then
                 feat_Jvalues = .true.
                 call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
                 call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
