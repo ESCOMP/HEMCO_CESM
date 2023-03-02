@@ -228,7 +228,7 @@ contains
 ! !IROUTINE: HCOI_Allocate_All
 !
 ! !DESCRIPTION: HCOI\_Allocate\_All allocates temporary met fields for use in
-!  HEMCO.
+!  HEMCO and performs initialization of pbuf fields for interfacing with chem.
 !\\
 !\\
 ! !INTERFACE:
@@ -241,6 +241,10 @@ contains
         use spmd_utils,       only: masterproc
 
         use HCO_ESMF_Grid,    only: AREA_M2, HCO_Grid_HCO2CAM_2D
+
+        ! Chemistry descriptor
+        use chemistry,      only: chem_is
+        use mo_chem_utls,   only: get_rxt_ndx
 !
 ! !REMARKS:
 !  Fields are allocated here after initialization of the hco\_esmf\_grid.
@@ -254,6 +258,7 @@ contains
 ! !REVISION HISTORY:
 !  31 Mar 2020 - H.P. Lin    - Initial version
 !  10 Aug 2022 - H.P. Lin    - Update FROCEAN, FRSEAICE for HEMCO 3.4.0+
+!  02 Mar 2023 - H.P. Lin    - Move initialization of pbuf for JOH, JNO2 here
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -444,6 +449,18 @@ contains
         ! Populate persistent values
         call HCO_Grid_HCO2CAM_2D(AREA_M2, State_CAM_AREAM2)
 
+        ! Perform pbuf initialization for interfacing with CAM-chem (hplin, 3/2/23)
+        if(.not. chem_is('GEOS-Chem')) then
+            index_rxt_jno2 = get_rxt_ndx('jno2')
+            index_rxt_joh  = get_rxt_ndx('jo3_b')
+
+            ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
+            if(index_rxt_jno2 > 0 .and. index_rxt_joh > 0) then
+                call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
+                call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
+            endif
+        endif
+
     end subroutine HCOI_Allocate_All
 !EOC
 !------------------------------------------------------------------------------
@@ -492,10 +509,6 @@ contains
         ! Output and mpi
         use cam_logfile,    only: iulog
         use spmd_utils,     only: masterproc, mpicom, masterprocid, iam
-
-        ! Chemistry descriptor
-        use chemistry,      only: chem_is
-        use mo_chem_utls,   only: get_rxt_ndx
 !
 ! !INPUT PARAMETERS:
 !
@@ -571,26 +584,13 @@ contains
         ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
         index_pblh = pbuf_get_index('pblh')
 
-        if(chem_is('GEOS-Chem')) then
-            ! Assume all versions of GEOS-Chem chemistry in CESM support JNO2, JOH pass
-            ! In which case we do not initialize HCO_IN_JNO2, HCO_IN_JOH
-            index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
-            index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
-            feat_Jvalues = .true.
-        else
-            ! J-values - check if reactions exist in CAM-chem (not in CESM-GC)
-            ! used for passing NO2, OH J-values to the HEMCO ParaNOx ship plume extension
-            ! for computation of ship plume emissions per Vinken et al., 2011.
-            index_rxt_jno2 = get_rxt_ndx('jno2')
-            index_rxt_joh  = get_rxt_ndx('jo3_b')
+        index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
+        index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
+        RC = ESMF_SUCCESS ! dummy
+        feat_Jvalues = .false.
 
-            ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
-            feat_Jvalues = .false.
-            if(index_rxt_jno2 > 0 .and. index_rxt_joh > 0) then
-                feat_Jvalues = .true.
-                call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
-                call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
-            endif
+        if(index_JNO2 > 0 .and. index_JOH > 0) then
+            feat_Jvalues = .true.
         endif
 
         if(masterproc .and. FIRST) write(iulog,*) "feat_JValues:", feat_JValues
