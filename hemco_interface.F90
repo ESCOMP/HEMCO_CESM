@@ -39,7 +39,7 @@ module hemco_interface
     use constituents,             only: pcnst       ! # of species
     use constituents,             only: cnst_name   ! species names
     use constituents,             only: cnst_mw     ! advected mass
-    use mo_chem_utls,             only: get_spc_ndx ! IND_
+    use mo_chem_utls,             only: get_spc_ndx ! IND_ equivalent
 
     ! Check chemistry option
     use chemistry,                only: chem_is
@@ -129,6 +129,10 @@ module hemco_interface
     type(HCO_State), pointer, public :: HcoState  => NULL()
     type(Ext_State), pointer, public :: ExtState  => NULL()
 
+    ! HEMCO internal grid parameters
+    integer                          :: HcoGridIM           ! # of lons
+    integer                          :: HcoGridJM           ! # of lats
+
     ! Last execution times for the HEMCO component. We are assuming that time
     ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
     integer                          :: last_HCO_day, last_HCO_second
@@ -177,8 +181,10 @@ contains
         integer :: unitn, ierr
         character(len=*), parameter  :: subname = 'hemco_readnl'
         character(len=256)           :: hemco_config_file = 'HEMCO_Config.rc'
+        integer                      :: hemco_grid_xdim = 0
+        integer                      :: hemco_grid_ydim = 0
 
-        namelist /hemco_nl/ hemco_config_file
+        namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim
 
         ! Read namelist on master proc
         ! ...
@@ -197,13 +203,18 @@ contains
             call freeunit(unitn)
 
             write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
+            write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
         endif
 
         ! MPI Broadcast Namelist variables
         call mpi_bcast(hemco_config_file, len(hemco_config_file), mpi_character, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_grid_xdim, 1, mpi_integer, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_grid_ydim, 1, mpi_integer, masterprocid, mpicom, ierr)
 
         ! Save this to the module information
         HcoConfigFile = hemco_config_file
+        HcoGridIM     = hemco_grid_xdim
+        HcoGridJM     = hemco_grid_ydim
     end subroutine hemco_readnl
 !EOC
 !------------------------------------------------------------------------------
@@ -241,6 +252,9 @@ contains
         ! CAM history output (to be moved somewhere later)
         use cam_history,      only: addfld, add_default, horiz_only
 
+        ! Get extfrc list check for 3-D emissions capability
+        use mo_chem_utls,     only: get_extfrc_ndx
+
         ! HEMCO Initialization
         use HCO_Config_Mod,   only: Config_ReadFile, ConfigInit
         use HCO_Driver_Mod,   only: HCO_Init
@@ -255,15 +269,13 @@ contains
         use HCOX_Driver_Mod,  only: HCOX_Init
 !
 ! !REMARKS:
-!  HEMCO extensions are unsupported in the preliminary version, due to
-!  complications associated with met fields and stuff.
-!  A "state conversion" to convert CAM met fields to GEOSFP format will
-!  need to be coordinated with fritzt later down the road (hplin, 3/27/20)
+!  None currently.
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
 !  15 Dec 2020 - H.P. Lin    - Implement HEMCO extensions that do require met
 !  23 Mar 2021 - H.P. Lin    - Now export for diagnostics too
+!  12 Jan 2023 - H.P. Lin    - Optimize memory usage by only allocating 2-D/3-D as needed
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -300,12 +312,16 @@ contains
         integer                      :: prev_day, prev_s, now_day, now_s
         integer                      :: stepsize_tmp
 
+        ! Temporaries
+        logical                      :: IsExtfrc3DEmis
+
         !-----------------------------------------------------------------------
 
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
-            write(iulog,*) "HEMCO_CAM interface version 0.3"
+            write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
+            write(iulog,*) "HEMCO_CAM interface version 1.1.1"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -366,24 +382,33 @@ contains
         !-----------------------------------------------------------------------
         ! Setup a lat-lon "HEMCO" intermediate grid
         !-----------------------------------------------------------------------
-
-        ! TODO: For now, hardcode using 1x1 grid for testing with fv0.9x1.25.
-        ! This provides a sufficient # of grid boxes acceptable for decomp
-        ! on the default Cheyenne configuration. (hplin, 2/21/20)
-
         ! TODO: For now, # of PEs to use for HEMCO will be total # of PEs.
         ! These will all have to be specified in the HEMCO namelist later on.
 
+        ! The number of grid dimensions can be specified in atm namelist for
+        ! hemco_grid_xdim, hemco_grid_ydim. note that half-sized polar boxes are made
+        ! so increase the y-dim by one.
         ! 288x201 = 0.9x1.25
         ! 144x91  = 2.0x2.5
-        ! 
-        call HCO_Grid_Init (IM_in = 288, JM_in = 201, nPET_in = npes, RC=RC)
+
+        ! Verify that the grid is in a reasonable state
+        if(HcoGridIM .le. 1 .or. HcoGridJM .le. 1) then
+            call endrun("Invalid HEMCO grid parameters - too small - in &hemco namelist. Specify hemco_grid_xdim and hemco_grid_ydim as # of grid boxes in each dimension")
+        endif
+
+        if(mod(HcoGridJM, 2) .ne. 1) then
+            call endrun("Invalid HEMCO grid parameters - hemco_grid_ydim needs to be odd - in &hemco namelist. This is because y-dim has half-sized polar boxes.")
+        endif
+
+        ! Initialize the HEMCO intermediate grid
+        call HCO_Grid_Init (IM_in = HcoGridIM, JM_in = HcoGridJM, nPET_in = npes, RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        !if(masterproc) then
-        !    write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
-        !    write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
-        !endif
+        if(masterproc) then
+            write(iulog,*) "> Initialized HEMCO Grid environment successfully!"
+            write(iulog,*) "> Global Dimensions: ", HcoGridIM, HcoGridJM, LM
+            write(iulog,*) "> my_IM, my_JM, LM, my_CE", my_IM, my_JM, LM, my_CE
+        endif
 
         !-----------------------------------------------------------------------
         ! Update HEMCO regrid descriptors for the first time.
@@ -449,7 +474,6 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         HcoConfig%amIRoot   = masterproc
-        
         ! HcoConfig%amIRoot   = .true. ! for debug only so verbosity is higher
 
         HcoConfig%MetField  = 'MERRA2'
@@ -458,8 +482,8 @@ contains
         !-----------------------------------------------------------------------
         ! Retrieve the species list and register exports
         !-----------------------------------------------------------------------
-        ! Below we directly use nHcoSpc for now... it may be wrong in the future though
-        ! (hplin, 3/29/20)
+        ! Below we directly use nHcoSpc which corresponds to the number of constituents
+        ! (nHcoSpc = pcnst). Only constituents may be advected.
         HcoConfig%nModelSpc = nHcoSpc
         HcoConfig%nModelAdv = nHcoSpc            ! # of adv spc?
 
@@ -468,27 +492,45 @@ contains
         do N = 1, nHcoSpc
             HcoConfig%ModelSpc(N)%ModID   = N ! model id
 
-            HcoConfig%ModelSpc(N)%SpcName = trim(cnst_name(N))
+            HcoConfig%ModelSpc(N)%SpcName = trim(cnst_name(N)) ! only constituents can be emitted
 
             !----------------------------------------------
             ! Register export properties.
             !----------------------------------------------
             ! History output (this will be moved to hco_cam_exports soon hopefully)
-
-            ! TODO (hplin): Writes to tape 2 by default, add namelist option to force it
-            ! to go in a different tape? Or abide to CAM conventions...
             exportName = 'HCO_' // trim(HcoConfig%ModelSpc(N)%SpcName)
-            exportDesc = "HEMCO 3-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
-            call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
-            ! call add_default(exportName, 3, ' ') ! On by default
 
             !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
 
             ! Physics buffer
             ! Note that _AddField will prepend HCO_, so do not add it here
-            call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 3, hcoID=N)
+            !
+            ! Update hplin 1/13/23: Verify if part of extfrc_lst. If yes,
+            ! then allocate as 3-D. Otherwise, this field can be allocated
+            ! as 2-D. This scan is somewhat intensive as it uses get_extfrc_ndx
+            ! which loops through extcnt in extfrc_lst.
+            IsExtfrc3DEmis = (get_extfrc_ndx(trim(HcoConfig%ModelSpc(N)%SpcName)) .gt. 0)
+
+            if(masterproc) write(iulog,*) "Setting up HEMCO exportName " // trim(exportName), IsExtfrc3DEmis
+            if(IsExtfrc3DEmis) then
+                ! 3-D emissions are supported
+                HcoConfig%ModelSpc(N)%DimMax = 3
+
+                exportDesc = "HEMCO 3-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
+                call addfld(exportName, (/'lev'/), 'I', 'kg/m2/s',          &
+                            trim(exportDesc),                               &
+                            gridname='physgrid')
+                call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 3, hcoID=N)
+            else
+                ! 2-D emissions only
+                HcoConfig%ModelSpc(N)%DimMax = 2
+
+                exportDesc = "HEMCO 2-D Emissions Species " // trim(HcoConfig%ModelSpc(N)%SpcName)
+                call addfld(exportName, horiz_only, 'I', 'kg/m2/s',          &
+                            trim(exportDesc),                               &
+                            gridname='physgrid')
+                call HCO_Export_Pbuf_AddField(HcoConfig%ModelSpc(N)%SpcName, 2, hcoID=N)
+            endif
         enddo
 
         !-----------------------------------------------------------------------
@@ -670,7 +712,7 @@ contains
         call HCO_Init(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        !if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
+        if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
 
         !-----------------------------------------------------------------------
         ! Initialize HEMCO Extensions!
@@ -678,7 +720,7 @@ contains
         call HCOX_Init(HcoState, ExtState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        !if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
+        if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
 
         !-----------------------------------------------------------------------
         ! Additional exports: Verify if additional diagnostic quantities
@@ -706,6 +748,8 @@ contains
                         trim(exportDesc),                                &
                         gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
+
+            if(masterproc) write(iulog,*) "> HEMCO ParaNOx extension exports (PAR_O3_DEP, PAR_HNO3_DEP) initialized successfully"
         endif
 
         !-----------------------------------------------------------------------
@@ -714,280 +758,153 @@ contains
         !-----------------------------------------------------------------------
 
         ! Do additional exports!
+        ! Removed debug into history output because it does not seem necessary (hplin, 9/23/22)
         if(chem_is('GEOS-Chem')) then
-            !do N = 0, 72
-            !    ! LANDTYPExx
-            !    write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
-            !    exportName = 'HCO_' // trim(exportNameTmp)
-            !    exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
+            do N = 0, 72
+               ! LANDTYPExx
+               write(exportNameTmp, '(a,i2.2)') 'LANDTYPE', N
+               exportName = 'HCO_' // trim(exportNameTmp)
+               call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
-            !    call addfld(exportName, horiz_only, 'I', '1',                &
-            !                trim(exportDesc),                               &
-            !                gridname='physgrid')
-            !    ! call add_default(exportName, 2, 'I') ! On by default
-
-            !    ! Also pbuf
-            !    call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
-            !    
-            !    !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
-
-            !    ! XLAIxx
-            !    write(exportNameTmp, '(a,i2.2)') 'XLAI', N
-            !    exportName = 'HCO_' // trim(exportNameTmp)
-            !    exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-
-            !    call addfld(exportName, horiz_only, 'I', '1',                &
-            !                trim(exportDesc),                               &
-            !                gridname='physgrid')
-            !    ! call add_default(exportName, 2, 'I') ! On by default
-
-            !    ! Also pbuf
-            !    call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
-
-            !    !if(masterproc) write(iulog,*) "Exported exportName " // trim(exportName) // " to history"
-            !enddo
+               ! XLAIxx
+               write(exportNameTmp, '(a,i2.2)') 'XLAI', N
+               exportName = 'HCO_' // trim(exportNameTmp)
+               call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
+            enddo
 
             ! VMR_CH3CL
             write(exportnameTmp, '(a)') 'VMR_CH3CL'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CH2CL2
             write(exportnameTmp, '(a)') 'VMR_CH2CL2'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CHCL3
             write(exportnameTmp, '(a)') 'VMR_CHCL3'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CH3BR
             write(exportnameTmp, '(a)') 'VMR_CH3BR'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CCL4
             write(exportnameTmp, '(a)') 'VMR_CCL4'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CFC113
             write(exportnameTmp, '(a)') 'VMR_CFC113'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CFC114
             write(exportnameTmp, '(a)') 'VMR_CFC114'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CFC115
             write(exportnameTmp, '(a)') 'VMR_CFC115'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CFC11
             write(exportnameTmp, '(a)') 'VMR_CFC11'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CFC12
             write(exportnameTmp, '(a)') 'VMR_CFC12'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_CH3CCL3
             write(exportnameTmp, '(a)') 'VMR_CH3CCL3'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_H1211
             write(exportnameTmp, '(a)') 'VMR_H1211'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_H1301
             write(exportnameTmp, '(a)') 'VMR_H1301'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_H2402
             write(exportnameTmp, '(a)') 'VMR_H2402'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_HCFC141b
             write(exportnameTmp, '(a)') 'VMR_HCFC141B'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_HCFC142B
             write(exportnameTmp, '(a)') 'VMR_HCFC142B'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_HCFC22
             write(exportnameTmp, '(a)') 'VMR_HCFC22'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_N2O
             write(exportnameTmp, '(a)') 'VMR_N2O'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_OCS
             write(exportnameTmp, '(a)') 'VMR_OCS'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! VMR_H2
             write(exportnameTmp, '(a)') 'VMR_H2'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'ppbv',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! UVALBEDO
             write(exportnameTmp, '(a)') 'UV_ALBEDO'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', '1',                &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! SURF_IODIDE
             write(exportnameTmp, '(a)') 'iodide'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'nM',               &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! SURF_SALINITY
             write(exportnameTmp, '(a)') 'salinity'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'PSU',              &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! OMOC_DJF
             write(exportnameTmp, '(a)') 'OMOC_DJF'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'PSU',              &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! OMOC_MAM
             write(exportnameTmp, '(a)') 'OMOC_MAM'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'PSU',              &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! OMOC_JJA
             write(exportnameTmp, '(a)') 'OMOC_JJA'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'PSU',              &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             ! OMOC_SON
             write(exportnameTmp, '(a)') 'OMOC_SON'
             exportName = 'HCO_' // trim(exportNameTmp)
-            exportDesc = "HEMCO Chemistry Input Name " // trim(exportNameTmp)
-            call addfld(exportName, horiz_only, 'I', 'PSU',              &
-                        trim(exportDesc),                               &
-                        gridname='physgrid')
             call HCO_Export_Pbuf_AddField(exportNameTmp, 2)
 
             if ( masterproc ) then
@@ -1014,10 +931,12 @@ contains
 !
         use cam_logfile,      only: iulog
         use spmd_utils,       only: masterproc
-
 !
 ! !REVISION HISTORY:
 !  14 Dec 2020 - H.P. Lin    - Initial version
+!  16 Jan 2023 - H.P. Lin    - Need to reset this after pbuf fields are now 3-D or 2-D.
+!                              Approximately 16 hours of debugging stack corruptions
+!                              were needed to realize I wrote this routine.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1028,15 +947,23 @@ contains
         integer                      :: RC                   ! ESMF return code
 
         integer                      :: spcID
-        real(ESMF_KIND_R8)           :: zeroFldCAM(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)           :: zeroFldCAM_3D(1:LM, 1:my_CE)
+        real(ESMF_KIND_R8)           :: zeroFldCAM_2D(1:my_CE)
 
         ! Zero out quantities first
-        zeroFldCAM(:,:)   = 0.0_r8
+        zeroFldCAM_3D(:,:)   = 0.0_r8
+        zeroFldCAM_2D(:  )   = 0.0_r8
 
         ! Reset for each species
         do spcID = 1, HcoConfig%nModelSpc
             ! Write to physics buffer (pass model name)
-            call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM)
+            if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_3D)
+            elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                call HCO_Export_Pbuf_CAM2D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, zeroFldCAM_2D)
+            else
+                ASSERT_(.false.)
+            endif
         enddo
 
     end subroutine HCOI_Initialize_Pbuf
@@ -1271,6 +1198,8 @@ contains
         ! Temporaries used for export (2-D data)
         real(ESMF_KIND_R8)                    :: exportFldHco2(my_IS:my_IE, my_JS:my_JE)
         real(ESMF_KIND_R8)                    :: exportFldCAM2(1:my_CE)
+        real(ESMF_KIND_R8)                    :: exportFldHcoDep(my_IS:my_IE, my_JS:my_JE)
+        real(ESMF_KIND_R8)                    :: exportFldCAMDep(1:my_CE)
 
         ! For debug dummies
         real(ESMF_KIND_R8)                    :: dummy_0_CAM(1:LM, 1:my_CE)
@@ -1301,10 +1230,13 @@ contains
 
         logical, save                :: FIRST = .True.
         logical                      :: doExport = .False.
+        integer, save                :: nCalls = 0
 
         ! Assume success
         RC = ESMF_SUCCESS
         HMRC = HCO_SUCCESS
+
+        nCalls = nCalls + 1
 
         !-----------------------------------------------------------------------
         ! Update regridding file handles as necessary
@@ -1404,7 +1336,7 @@ contains
         !-----------------------------------------------------------------------
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=1)
 
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (1)"
         endif
 
@@ -1437,7 +1369,7 @@ contains
         !-----------------------------------------------------------------------
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=2)
 
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (2)"
 
             ! As a test... maybe we also need to flip in the vertical
@@ -1492,7 +1424,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
 
         call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
@@ -1508,7 +1440,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
 
         !-----------------------------------------------------------------------
         ! Run HEMCO Extensions!
@@ -1527,8 +1459,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HCOX_Run"
-
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCOX_Run"
 
         !-----------------------------------------------------------------------
         ! Update "autofill" diagnostics.
@@ -1540,7 +1471,7 @@ contains
         call HcoDiagn_AutoUpdate(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
 
         !-----------------------------------------------------------------------
         ! Tell HEMCO we are done for this timestep...
@@ -1548,7 +1479,7 @@ contains
         call HcoClock_EmissionsDone(HcoState%Clock, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
 
         !-----------------------------------------------------------------------
         ! Do some testing and write emissions to the tape
@@ -1561,17 +1492,9 @@ contains
 
         ! For each species...
         do spcID = 1, HcoConfig%nModelSpc
-            ! Zero out quantities first
-            exportFldHco(:,:,:) = 0.0_r8
-            exportFldCAM(:,:)   = 0.0_r8
 
-            ! Do not handle aerosol number emissions here - needs fix first (hplin, 5/7/21)
-            ! if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a1" .or.
-            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a2" .or.
-            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a3" .or.
-            !    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "num_a4") then
-            !     continue
-            ! endif
+            ! TODO: Eventually convert aerosol number emissions from mass fluxes
+            ! directly rather than using scale factors for num_ax (1/12/23, hplin)
 
             ! Build history / pbuf field name (HCO_NO, HCO_CO, etc.)
             exportName = 'HCO_' // trim(HcoConfig%ModelSpc(spcID)%SpcName)
@@ -1582,14 +1505,44 @@ contains
             ! For performance optimization ... tap into HEMCO structure directly (ugly ugly)
             ! No need to flip vertical here. The regridder will do it for us
             if(associated(HcoState%Spc(spcID)%Emis%Val)) then
-                exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:LM)
+                if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                    ! Zero out quantities first
+                    exportFldHco(:,:,:) = 0.0_r8
+                    exportFldCAM(:,:)   = 0.0_r8
+
+                    ! Retrieve flux from HEMCO...
+                    exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM) = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1:LM)
+
+                    ! Regrid exportFldHco to CAM grid...
+                    call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+                elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                    ! Zero out quantities first
+                    exportFldHco2(:,:) = 0.0_r8
+                    exportFldCAM2(:)   = 0.0_r8
+
+                    ! Retrieve flux from HEMCO...
+                    ! Only surface emissions are supported here. Note, HEMCO emissions are with 1 = surface and LM = TOA. Use index 1. (hplin, 1/12/23)
+                    exportFldHco2(my_IS:my_IE,my_JS:my_JE)     = HcoState%Spc(spcID)%Emis%Val(1:HI,1:HJ,1)
+
+                    ! Regrid exportFldHco to CAM grid...
+                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+                else
+                    ASSERT_(.false.)
+                endif
 
                 !if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
-                !write(6,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
+            else
+                ! No emission value. No need to run regrid, instead populate with zeros as needed
+                ! Why not populate at top, you ask? Because zeroing out arrays is expensive, and
+                ! we do not want to be doing twice the work.
+                if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                    exportFldCAM(:,:) = 0.0_r8
+                elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                    exportFldCAM2(:)  = 0.0_r8
+                else
+                    ASSERT_(.false.)
+                endif
             endif
-
-            ! Regrid exportFldHco to CAM grid...
-            call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM, doRegrid=doExport)
 
             ! Handle deposition flux from deposition velocity [1/s]
             ! This can be performed on the CAM grid. (hplin, 5/7/21)
@@ -1624,11 +1577,11 @@ contains
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
 
                     ! Clear data
-                    exportFldCAM2(:) = 0.0_r8
+                    exportFldCAMDep(:) = 0.0_r8
 
                     ! Regrid deposition flux HCO to CAM
-                    exportFldHco2(my_IS:my_IE,my_JS:my_JE) = HcoState%Spc(spcID)%Depv%Val(1:HI,1:HJ)
-                    call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+                    exportFldHcoDep(my_IS:my_IE,my_JS:my_JE) = HcoState%Spc(spcID)%Depv%Val(1:HI,1:HJ)
+                    call HCO_Grid_HCO2CAM_2D(exportFldHcoDep, exportFldCAMDep)
 
                     ! dbg:
                     ! if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
@@ -1639,47 +1592,78 @@ contains
                 ! Perform handling: Note species-specific State_CAM_* data
                 ! Note handling is for surface (idx LM for CAM inverted-atm)
                 if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
-                    ! write(6,*) "hplin: dms val", State_CAM_chmDMS(:)
-                    ! write(6,*) "hplin: dms pv", exportFldCAM(LM,:)
-                    ! write(6,*) "hplin: dms delpS", State_CAM_DELP_DRYs(:)
-                    ! write(6,*) "hplin: dms depv", exportFldCAM2(:)
-                    ! write(6,*) "hplin: dms nv", (exportFldCAM2(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100)
-
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
-
-                    ! dbg: just export the deposition 1/s flux
-                    ! scratchFldCAM2(:) = exportFldCAM2(:) !* State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ACET" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3COCH3") then
-                    ! write(6,*) "hplin: acet val", State_CAM_chmACET(:)
-                    ! write(6,*) "hplin: acet pv", exportFldCAM(LM,:)
-                    ! write(6,*) "hplin: acet delpS", State_CAM_DELP_DRYs(:)
-                    ! write(6,*) "hplin: acet depv", exportFldCAM2(:)
-                    ! write(6,*) "hplin: acet nv", (exportFldCAM2(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100)
-
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ALD2" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3CHO") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 elseif( &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MOH" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MENO3") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ETNO3") then
-                    exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAM2(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                    else
+                        ASSERT_(.false.)
+                    endif
                 endif
             endif
 
             if(doExport) then
-                ! Write to history on CAM mesh
-                call HCO_Export_History_CAM3D(exportName, exportFldCAM)
+                if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
+                    ! Write to history on CAM mesh
+                    call HCO_Export_History_CAM3D(exportName, exportFldCAM)
 
-                ! Write to physics buffer (pass model name)
-                call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
+                    ! Write to physics buffer (pass model name)
+                    call HCO_Export_Pbuf_CAM3D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM)
+                elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
+                    ! Write to history on CAM mesh
+                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
+
+                    ! Write to physics buffer (pass model name)
+                    call HCO_Export_Pbuf_CAM2D(HcoConfig%ModelSpc(spcID)%SpcName, spcID, exportFldCAM2)
+                else
+                    ASSERT_(.false.)
+                endif
             endif
 
         enddo
@@ -1752,8 +1736,6 @@ contains
         
         if(chem_is('GEOS-Chem')) then
             if(masterproc) write(iulog,*) "HEMCO_CESM: starting exports to GEOS-Chem"
-            ! Temporarily disable offline landtypes
-#if defined( HEMCO_CESM_OFFL_LT )            
             do N = 0, 72
                 ! Assume success
                 HMRC = HCO_SUCCESS
@@ -1773,7 +1755,6 @@ contains
                 endif
 
                 if(doExport) then
-                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                     call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
                 Ptr2D => NULL()
@@ -1793,12 +1774,10 @@ contains
                 endif
 
                 if(doExport) then
-                    call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                     call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
                 endif
                 Ptr2D => NULL()
             enddo
-#endif
 
             ! VMR_CH3CL
             write(exportNameTmp, '(a)') 'VMR_CH3CL'
@@ -1812,7 +1791,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1828,7 +1806,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1844,7 +1821,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1860,7 +1836,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1876,7 +1851,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1892,7 +1866,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1908,7 +1881,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1924,7 +1896,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1940,7 +1911,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1956,7 +1926,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1972,7 +1941,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -1988,7 +1956,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2004,7 +1971,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2020,7 +1986,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2036,7 +2001,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2052,7 +2016,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2068,7 +2031,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2084,7 +2046,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2100,7 +2061,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2116,7 +2076,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
 
@@ -2138,7 +2097,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2158,7 +2116,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2177,7 +2134,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2196,7 +2152,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2215,7 +2170,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2234,7 +2188,6 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
@@ -2253,12 +2206,11 @@ contains
                 call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
             endif
             if(doExport) then
-                call HCO_Export_History_CAM2D(exportName, exportFldCAM2)
                 call HCO_Export_Pbuf_CAM2D(exportNameTmp, -1, exportFldCAM2)
             endif
             Ptr2D => NULL()
             
-            if(masterproc) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
+            if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
         endif
 
         ! dummy_0_CAM(:,:) = iam * 1.0_r8
@@ -2272,50 +2224,51 @@ contains
         !            size(State_CAM_ps, 1), my_CE, pver
 
         dummy_0_CAM(:,:) = 0.0_r8
-        dummy_0_CAM(1,:) = State_CAM_TS
-        dummy_0_CAM(2,:) = State_CAM_U10M
-        dummy_0_CAM(3,:) = State_CAM_V10M
-        dummy_0_CAM(4,:) = State_CAM_ALBD
-        dummy_0_CAM(5,:) = State_CAM_LWI
-        dummy_0_CAM(6,:) = State_CAM_ps
-        dummy_0_CAM(7,:) = State_CAM_pblh
-        dummy_0_CAM(8,:) = State_CAM_CSZA
-        dummy_0_CAM(9,:) = State_CAM_psdry
-        dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
-        dummy_0_CAM(11,:) = State_CAM_JNO2
-        dummy_0_CAM(12,:) = State_CAM_JOH
+        ! dummy_0_CAM(1,:) = State_CAM_TS
+        ! dummy_0_CAM(2,:) = State_CAM_U10M
+        ! dummy_0_CAM(3,:) = State_CAM_V10M
+        ! dummy_0_CAM(4,:) = State_CAM_ALBD
+        ! dummy_0_CAM(5,:) = State_CAM_LWI
+        ! dummy_0_CAM(6,:) = State_CAM_ps
+        ! dummy_0_CAM(7,:) = State_CAM_pblh
+        ! dummy_0_CAM(8,:) = State_CAM_CSZA
+        ! dummy_0_CAM(9,:) = State_CAM_psdry
+        ! dummy_0_CAM(10,:) = State_CAM_chmO3(LM,:)
+        ! dummy_0_CAM(11,:) = State_CAM_JNO2
+        ! dummy_0_CAM(12,:) = State_CAM_JOH
         ! dummy_0_CAM(13,:) = scratchFldCAM2
 
         ! fill with some test data, but clean the data first!
-        dummy_1(:,:,:) = 0.0_r8
-        dummy_1(:,:,1) = State_HCO_TS
-        dummy_1(:,:,2) = State_HCO_U10M
-        dummy_1(:,:,3) = State_HCO_V10M
-        dummy_1(:,:,4) = State_HCO_ALBD
-        dummy_1(:,:,5) = State_HCO_WLI
-        dummy_1(:,:,6) = State_HCO_PSFC
-        dummy_1(:,:,7) = State_HCO_PBLH
-        dummy_1(:,:,8) = State_HCO_CSZA
-        dummy_1(:,:,9) = State_HCO_AIR(:,:,1)
-        dummy_1(:,:,10) = State_HCO_AIR(:,:,2)
-        dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
-        dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
-        dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
+        !dummy_1(:,:,:) = 0.0_r8
+        dummy_1_CAM(:,:) = 0.0_r8
+        ! dummy_1(:,:,1) = State_HCO_TS
+        ! dummy_1(:,:,2) = State_HCO_U10M
+        ! dummy_1(:,:,3) = State_HCO_V10M
+        ! dummy_1(:,:,4) = State_HCO_ALBD
+        ! dummy_1(:,:,5) = State_HCO_WLI
+        ! dummy_1(:,:,6) = State_HCO_PSFC
+        ! dummy_1(:,:,7) = State_HCO_PBLH
+        ! dummy_1(:,:,8) = State_HCO_CSZA
+        ! dummy_1(:,:,9) = State_HCO_AIR(:,:,1)
+        ! dummy_1(:,:,10) = State_HCO_AIR(:,:,2)
+        ! dummy_1(:,:,11) = Area_M2(my_IS:my_IE,my_JS:my_JE)
+        ! dummy_1(:,:,12) = State_HCO_chmO3(:,:,1)
+        ! dummy_1(:,:,13) = State_HCO_chmNO(:,:,1)
 
-        dummy_1(:,:,14) = HcoState%Grid%BXHEIGHT_M%Val(:,:,1)
-        dummy_1(:,:,15) = HcoState%Grid%BXHEIGHT_M%Val(:,:,2)
-        dummy_1(:,:,16) = State_HCO_F_OF_PBL(:,:,1)
-        dummy_1(:,:,17) = State_HCO_F_OF_PBL(:,:,2)
+        ! dummy_1(:,:,14) = HcoState%Grid%BXHEIGHT_M%Val(:,:,1)
+        ! dummy_1(:,:,15) = HcoState%Grid%BXHEIGHT_M%Val(:,:,2)
+        ! dummy_1(:,:,16) = State_HCO_F_OF_PBL(:,:,1)
+        ! dummy_1(:,:,17) = State_HCO_F_OF_PBL(:,:,2)
         ! dummy_1(:,:,18) = dummy_2(:,:)
 
         ! Regrid to CAM physics mesh!
-        call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
+        !call HCO_Grid_HCO2CAM_3D(dummy_1, dummy_1_CAM)
 
         ! Write to history on CAM mesh
         !call HCO_Export_History_CAM3D("DIAG_HCO_TEST", dummy_1_CAM)
         !call HCO_Export_History_CAM3D("DIAG_CAM_TEST", dummy_0_CAM)
 
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "HEMCO_CAM: Exports completed for this timestep!"
         endif
 
@@ -2358,6 +2311,8 @@ contains
         ! the CAM_DistGrid and CAM_PhysMesh maneuvers here and do this in
         ! HCO_ESMF_Grid::HCO_Grid_ESMF_CreateCAM instead.
 
+        RC = ESMF_SUCCESS
+
     end subroutine HCO_GC_Init
 
     ! Finalize Gridded Component
@@ -2376,6 +2331,9 @@ contains
 
         ! call ESMF_MeshDestroy(CAM_PhysMesh, rc=RC)
         ! ASSERT_(RC==ESMF_SUCCESS)
+
+        RC = ESMF_SUCCESS
+
     end subroutine HCO_GC_Final
 
     subroutine HCO_GC_SetServices(GC, RC)

@@ -45,6 +45,9 @@ module hco_cam_convert_state_mod
     use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
     use shr_kind_mod,             only: r8 => shr_kind_r8
 
+    ! Physics buffer
+    use physics_buffer, only: pbuf_add_field, dtype_r8
+
     implicit none
     private
 
@@ -82,15 +85,18 @@ module hco_cam_convert_state_mod
 !  
 !  ALBD
 !  F_OF_PBL
+!  FROCEAN, FRSEAICE (added 8/10/22)
 !  HNO3
 !  NO, NO2
 !  O3
 !  PBLH
 !  PSFC
+!  QV2M (added 8/10/22)
 !  SUNCOS
 !  T2M
 !  TK
 !  TSKIN
+!  USTAR (added 8/10/22)
 !  U10M
 !  V10M
 !
@@ -104,6 +110,8 @@ module hco_cam_convert_state_mod
 !  STUBS
 !  ----------------------------------------------------------------------------
 !  GWETTOP = 0
+!  FRLANDIC = 0
+!  FRLAKE = 0
 !
 !  Disabled: AIRVOL
 !
@@ -111,6 +119,8 @@ module hco_cam_convert_state_mod
 !  15 Dec 2020 - H.P. Lin    - Initial version
 !  04 Feb 2021 - H.P. Lin    - Add State_GC_* for some GC-specific intermediate qtys
 !  07 May 2021 - H.P. Lin    - Add state fluxes on CAM grid for deposition computation
+!  10 Aug 2022 - H.P. Lin    - Update quantities QV2M, USTAR, FROCEAN, FRSEAICE
+!  20 Jan 2023 - H.P. Lin    - Remove WLI for HEMCO 3.6.0+; add FRLAND.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -119,6 +129,9 @@ module hco_cam_convert_state_mod
 !
     ! Flag for supported features
     logical                          :: feat_JValues
+
+    ! Indices for reactions (rxt) and pbuf fields
+    integer                          :: index_rxt_jno2, index_rxt_joh, index_JNO2, index_JOH
 
     ! On the CAM grid (state%psetcols, pver) (LM, my_CE)
     ! Arrays are flipped in order (k, i) for the regridder
@@ -131,13 +144,18 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_U10M(:)
     real(r8), pointer, public        :: State_CAM_V10M(:)
     real(r8), pointer, public        :: State_CAM_ALBD(:)
-    real(r8), pointer, public        :: State_CAM_LWI(:)
+    real(r8), pointer, public        :: State_CAM_USTAR(:)
 
     real(r8), pointer, public        :: State_CAM_CSZA(:)
 
     real(r8), pointer, public        :: State_CAM_AREAM2(:)
     real(r8), pointer, public        :: State_CAM_AIRs  (:)
     real(r8), pointer, public        :: State_CAM_DELP_DRYs(:)
+
+    ! Land fractions (converted to Olson) from CAM - 1D
+    real(r8), pointer, public        :: State_CAM_FRLAND   (:)
+    real(r8), pointer, public        :: State_CAM_FROCEAN  (:)
+    real(r8), pointer, public        :: State_CAM_FRSEAICE (:)
 
     ! Chem Constituents on CAM grid
     real(r8), pointer, public        :: State_CAM_chmO3 (:,:)
@@ -153,11 +171,12 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_chmETNO3(:)
     real(r8), pointer, public        :: State_CAM_chmMOH(:)
 
-
-
     ! J-values from chemistry (2-D only, on surface)
     real(r8), pointer, public        :: State_CAM_JNO2(:)
     real(r8), pointer, public        :: State_CAM_JOH (:)
+
+    ! Q at 2m [kg H2O/kg air]
+    real(r8), pointer, public        :: State_CAM_QV2M(:)
 
     !------------------------------------------------------------------
     ! On the HEMCO grid (my_IM, my_JM, LM) or possibly LM+1
@@ -176,10 +195,16 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_U10M(:,:)
     real(r8), pointer, public        :: State_HCO_V10M(:,:)
     real(r8), pointer, public        :: State_HCO_ALBD(:,:)
-    real(r8), pointer, public        :: State_HCO_WLI(:,:)
+    real(r8), pointer, public        :: State_HCO_USTAR(:,:)
     real(r8), pointer, public        :: State_HCO_F_OF_PBL(:,:,:)
 
     real(r8), pointer, public        :: State_HCO_CSZA(:,:)
+
+    real(r8), pointer, public        :: State_HCO_FRLAND  (:,:)
+    real(r8), pointer, public        :: State_HCO_FRLANDIC(:,:)
+    real(r8), pointer, public        :: State_HCO_FROCEAN (:,:)
+    real(r8), pointer, public        :: State_HCO_FRSEAICE(:,:)
+    real(r8), pointer, public        :: State_HCO_FRLAKE  (:,:)
 
     ! Chem Constituents on HEMCO grid
     real(r8), pointer, public        :: State_HCO_chmO3 (:,:,:)
@@ -192,6 +217,13 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_JOH (:,:)
 
 
+    real(r8), pointer, public        :: State_HCO_QV2M(:,:)
+
+    ! constituent indices:
+    integer                          :: id_O3, id_NO, id_NO2, id_HNO3
+    integer                          :: id_H2O, id_Q
+    integer                          :: id_DMS, id_ACET, id_ALD2, id_MENO3, id_ETNO3, id_MOH
+
 contains
 !EOC
 !------------------------------------------------------------------------------
@@ -202,7 +234,7 @@ contains
 ! !IROUTINE: HCOI_Allocate_All
 !
 ! !DESCRIPTION: HCOI\_Allocate\_All allocates temporary met fields for use in
-!  HEMCO.
+!  HEMCO and performs initialization of pbuf fields for interfacing with chem.
 !\\
 !\\
 ! !INTERFACE:
@@ -215,6 +247,10 @@ contains
         use spmd_utils,       only: masterproc
 
         use HCO_ESMF_Grid,    only: AREA_M2, HCO_Grid_HCO2CAM_2D
+
+        ! Chemistry descriptor
+        use chemistry,      only: chem_is
+        use mo_chem_utls,   only: get_rxt_ndx
 !
 ! !REMARKS:
 !  Fields are allocated here after initialization of the hco\_esmf\_grid.
@@ -227,6 +263,8 @@ contains
 !
 ! !REVISION HISTORY:
 !  31 Mar 2020 - H.P. Lin    - Initial version
+!  10 Aug 2022 - H.P. Lin    - Update FROCEAN, FRSEAICE for HEMCO 3.4.0+
+!  02 Mar 2023 - H.P. Lin    - Move initialization of pbuf for JOH, JNO2 here
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -240,9 +278,9 @@ contains
         RC = ESMF_SUCCESS
 
         ! Sanity check
-        if(masterproc) then
-            write(iulog,*) "> HCOI_Allocate_All entering"
-        endif
+        !if(masterproc) then
+        !    write(iulog,*) "> HCOI_Allocate_All entering"
+        !endif
 
         ! PBL height [m]
         ! Comes from pbuf
@@ -286,6 +324,7 @@ contains
         allocate(State_HCO_TK(my_IM, my_JM, LM), stat=RC)
         ASSERT_(RC==0)
 
+
         ! For HEMCO extensions...
         allocate(State_CAM_TS   (my_CE), stat=RC)
         ASSERT_(RC==0)
@@ -295,9 +334,22 @@ contains
         ASSERT_(RC==0)
         allocate(State_CAM_ALBD (my_CE), stat=RC)
         ASSERT_(RC==0)
-        allocate(State_CAM_LWI  (my_CE), stat=RC)
+        allocate(State_CAM_USTAR(my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_CSZA (my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_FRLAND(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_FROCEAN(my_CE), stat=RC)
+        ASSERT_(RC==0)
+        allocate(State_CAM_FRSEAICE(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        ! QV2M
+        allocate(State_CAM_QV2M(my_CE), stat=RC)
+        ASSERT_(RC==0)
+
+        allocate(State_HCO_QV2M(my_IM, my_JM), stat=RC)
         ASSERT_(RC==0)
 
         ! Constituents
@@ -339,8 +391,8 @@ contains
         allocate(State_HCO_U10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_V10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_ALBD(my_IM, my_JM), stat=RC)
-        allocate(State_HCO_WLI(my_IM, my_JM), stat=RC)
         allocate(State_HCO_CSZA(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_USTAR(my_IM, my_JM), stat=RC)
         allocate(State_HCO_F_OF_PBL(my_IM, my_JM, LM), stat=RC)
         allocate(State_GC_DELP_DRY(my_IM, my_JM, LM), stat=RC)
 
@@ -351,6 +403,11 @@ contains
 
         allocate(State_HCO_JOH (my_IM, my_JM), stat=RC)
         allocate(State_HCO_JNO2(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLAND(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLANDIC(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FROCEAN(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRSEAICE(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_FRLAKE(my_IM, my_JM), stat=RC)
 
         ! Clear values
         State_HCO_AIR(:,:,:) = 0.0_r8
@@ -362,7 +419,7 @@ contains
         State_HCO_U10M(:,:) = 0.0_r8
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
-        State_HCO_WLI(:,:) = 0.0_r8
+        State_HCO_USTAR(:,:) = 0.0_r8
         State_HCO_CSZA(:,:) = 0.0_r8
         State_HCO_F_OF_PBL(:,:,:) = 0.0_r8
         State_GC_DELP_DRY(:,:,:) = 0.0_r8
@@ -371,6 +428,8 @@ contains
         State_HCO_chmNO(:,:,:) = 0.0_r8
         State_HCO_chmNO2(:,:,:) = 0.0_r8
         State_HCO_chmHNO3(:,:,:) = 0.0_r8
+
+        State_HCO_QV2M(:,:) = 0.0_r8
 
         State_CAM_chmDMS(:) = 0.0_r8
         State_CAM_chmACET(:) = 0.0_r8
@@ -381,12 +440,32 @@ contains
 
         State_CAM_JNO2(:) = 0.0_r8
         State_CAM_JOH (:) = 0.0_r8
+        State_CAM_QV2M(:) = 0.0_r8
+        State_CAM_USTAR(:) = 0.0_r8
 
         State_HCO_JNO2(:,:) = 0.0_r8
         State_HCO_JOH(:,:) = 0.0_r8
 
+        ! Unsupported fields in CESM are directly assigned to zero.
+        ! These, if ever available, will be updated along with chemistry.F90
+        ! under src/chemistry/geoschem. (hplin, 1/20/23)
+        State_HCO_FRLANDIC(:,:) = 0.0_r8
+        State_HCO_FRLAKE(:,:) = 0.0_r8
+
         ! Populate persistent values
         call HCO_Grid_HCO2CAM_2D(AREA_M2, State_CAM_AREAM2)
+
+        ! Perform pbuf initialization for interfacing with CAM-chem (hplin, 3/2/23)
+        if(.not. chem_is('GEOS-Chem')) then
+            index_rxt_jno2 = get_rxt_ndx('jno2')
+            index_rxt_joh  = get_rxt_ndx('jo3_b')
+
+            ! If they both exist, then create the pbuf fields... (hplin, 3/2/23)
+            if(index_rxt_jno2 > 0 .and. index_rxt_joh > 0) then
+                call pbuf_add_field('HCO_IN_JNO2', 'global', dtype_r8, (/pcols/), index_JNO2)
+                call pbuf_add_field('HCO_IN_JOH',  'global', dtype_r8, (/pcols/), index_JOH )
+            endif
+        endif
 
     end subroutine HCOI_Allocate_All
 !EOC
@@ -481,10 +560,6 @@ contains
         ! pbuf indices:
         integer                      :: index_pblh, index_JNO2, index_JOH
 
-        ! constituent indices:
-        integer                      :: id_O3, id_NO, id_NO2, id_HNO3
-        integer                      :: id_DMS, id_ACET, id_ALD2, id_MENO3, id_ETNO3, id_MOH
-
         ! Temporary geographical indices, allocated to max size (pcols)
         ! need to use actual column # ncol = get_ncols_p to fill to my_CE, which is exact
         real(r8)                     :: lchnk_rlats(1:pcols), lchnk_rlons(1:pcols)
@@ -500,7 +575,7 @@ contains
         ! Assume success
         RC = ESMF_SUCCESS
 
-        if(masterproc) then
+        if(masterproc .and. FIRST) then
             write(iulog,*) "> CAM_GetBefore_HCOI entering"
         endif
 
@@ -511,17 +586,16 @@ contains
         ! Keeping it here for now but later can be optimized (hplin, 3/31/20)
         index_pblh = pbuf_get_index('pblh')
 
-        ! J-values - might be -1 if not existent (i.e. not in CESM-GC)
-        ! Note: Assuming they exist in pairs (if index_JNO2 exists, all do)
-        ! (hplin, 3/3/21)
         index_JNO2 = pbuf_get_index('HCO_IN_JNO2', RC)
         index_JOH  = pbuf_get_index('HCO_IN_JOH', RC)
         RC = ESMF_SUCCESS ! dummy
+        feat_Jvalues = .false.
 
-        ! Set feature flag
-        feat_JValues = index_JNO2 > 0
+        if(index_JNO2 > 0 .and. index_JOH > 0) then
+            feat_Jvalues = .true.
+        endif
 
-        if(masterproc) write(iulog,*) "feat_JValues:", feat_JValues
+        if(masterproc .and. FIRST) write(iulog,*) "feat_JValues:", feat_JValues
 
         ! Get calday for cosza (current time, not midpoint of dt)
         calday = get_curr_calday()
@@ -534,6 +608,11 @@ contains
         call cnst_get_ind('NO', id_NO)
         call cnst_get_ind('NO2', id_NO2)
         call cnst_get_ind('HNO3', id_HNO3)
+
+        ! Get constitutent index for specific humidity
+        call cnst_get_ind('Q', id_Q)
+        ! call cnst_get_ind('H2O', id_H2O)
+        ! id_H2O not used for now, and also not present in CAM-chem. hplin, 9/9/22
 
         ! Retrieve optional - for deposition - constituent IDs
         call cnst_get_ind('DMS', id_DMS, abort=.False.)
@@ -551,8 +630,6 @@ contains
         if(id_MOH <= 0) then
             call cnst_get_ind('CH3OH', id_MOH, abort=.False.)
         endif
-
-        ! if(masterproc) write(iulog,*) "hplin fixme: O3, NO, NO2, HNO3", id_O3, id_NO, id_NO2, id_HNO3
 
         ! Phase 1: Store the fields in hemco_interface (copy)
         I = 0
@@ -613,11 +690,19 @@ contains
                 ! DEBUG: Write to CSZA as a test for latitude to make sure we are doing correctly
                 ! State_CAM_CSZA(I) = lchnk_rlats(J)
 
+                ! QV2M [kg H2O/kg air] (MMR -- this is converted to VMR by *MWdry/18 in SeaSalt)
+                ! at 2M, roughly surface ~ LM (1 is TOA)
+                ! (hplin, 8/10/22)
+                State_CAM_QV2M(I) = phys_state(lchnk)%q(J,LM,id_Q)
+
                 ! PBLH [m]
                 State_CAM_pblh(I) = pbuf_tmp_pblh(J)
 
                 ! COSZA Cosine of zenith angle [1]
                 State_CAM_CSZA(I) = lchnk_zenith(J)
+
+                ! USTAR Friction velocity [m/s]
+                State_CAM_USTAR(I) = cam_in(lchnk)%fv(J) * cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%uStar(J) * (1.0_r8 - cam_in(lchnk)%landFrac(J))
 
                 ! Sea level pressure [Pa] (note difference in units!!)
                 State_CAM_ps(I) = phys_state(lchnk)%ps(J)
@@ -642,19 +727,23 @@ contains
                     State_CAM_ALBD(I) = cam_in(lchnk)%asdir(J)
                 endif
 
-                ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)
-                if(ExtState%WLI%DoUse) then
-                    ! assume land
-                    State_CAM_LWI(I) = 1
-
-                    if(cam_in(lchnk)%iceFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%ocnFrac(J))) then
-                        State_CAM_LWI(I) = 2
-                    endif
-
-                    if(cam_in(lchnk)%ocnFrac(J) .gt. (cam_in(lchnk)%landFrac(J) + cam_in(lchnk)%iceFrac(J))) then
-                        State_CAM_LWI(I) = 0
-                    endif
+                ! Converted-to-Olson land fractions [1] (hplin, 8/10/22)
+                if(ExtState%FRLAND%DoUse) then
+                    State_CAM_FRLAND(I) = cam_in(lchnk)%landFrac(J)
                 endif
+
+                ! FRLANDIC unsupported
+
+                if(ExtState%FROCEAN%DoUse) then
+                    State_CAM_FROCEAN(I) = cam_in(lchnk)%ocnFrac(J) + cam_in(lchnk)%iceFrac(J)
+                endif
+
+                if(ExtState%FRSEAICE%DoUse) then
+                    State_CAM_FRSEAICE(I) = cam_in(lchnk)%iceFrac(J)
+                endif
+
+                ! FRLAKE unsupported
+                ! FRSNO unsupported
 
                 ! J-values (from CESM-GC only, at the moment. Added to CAM-chem/mozart 5/16/21)
                 if(feat_JValues .and. .not. FIRST) then
@@ -669,11 +758,12 @@ contains
 
         if(FIRST) then
             FIRST = .false.
+
+            if(masterproc) then
+                write(iulog,*) "> CAM_GetBefore_HCOI finished, feat_JValues = ", feat_JValues
+            endif
         endif
-        
-        if(masterproc) then
-            write(iulog,*) "> CAM_GetBefore_HCOI finished"
-        endif
+
     end subroutine CAM_GetBefore_HCOI
 !EOC
 !------------------------------------------------------------------------------
@@ -749,6 +839,7 @@ contains
         integer                      :: RC                   ! ESMF return code
 
         logical, save                :: FIRST = .true.
+        integer, save                :: nCalls = 0
 
         integer                      :: I, J, L              ! Loop index
 
@@ -764,7 +855,9 @@ contains
         ! Assume success
         RC = ESMF_SUCCESS
 
-        if(masterproc) then
+        nCalls = nCalls + 1
+
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "> CAM_RegridSet_HCOI entering", phase
         endif
 
@@ -778,7 +871,7 @@ contains
             call HCO_Grid_CAM2HCO_2D(State_CAM_pblh,   State_HCO_PBLH   )
             call HCO_Grid_CAM2HCO_3D(State_CAM_t,      State_HCO_TK     )
 
-            if(masterproc) then
+            if(masterproc .and. nCalls < 10) then
                 write(iulog,*) "> CAM_RegridSet_HCOI exiting phase 1"
             endif
 
@@ -825,9 +918,9 @@ contains
             call ExtDat_Set(HcoState, ExtState%T2M,  'T2M_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_TS)
         
-            if(masterproc) then
-                write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
-            endif
+            ! if(masterproc) then
+            !     write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
+            ! endif
         endif
 
         ! 10M E/W and N/S wind speed [m/s] (fixme: use pver?)
@@ -861,8 +954,19 @@ contains
                             RC,       FIRST,          State_HCO_ALBD)
         endif
 
+        ! Friction velocity
+        if(ExtState%USTAR%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_USTAR, State_HCO_USTAR)
+
+            call ExtDat_Set(HcoState, ExtState%USTAR, 'USTAR_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_USTAR)
+        endif
+
         ! Air mass [kg]
         if(ExtState%AIR%DoUse) then
+            ! This is computed above using GC routines for air quantities, so
+            ! it does not necessitate a regrid from CAM.
+
             call ExtDat_Set(HcoState, ExtState%AIR,   'AIRMASS_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_AIR)
         endif
@@ -889,6 +993,14 @@ contains
                             RC,       FIRST,          State_HCO_chmNO)
         endif
 
+        ! MMR of H2O at 2m [kg H2O/kg air] (2-D only)
+        if(ExtState%QV2M%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_QV2M, State_HCO_QV2M)
+
+            call ExtDat_Set(HcoState, ExtState%QV2M,  'QV2M_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_QV2M)
+        endif
+
         ! hplin 3/3/21: Disabling HNO3 for now - not actually used by HEMCO,
         ! not even in ParaNOx (code is commented out)
 
@@ -898,30 +1010,6 @@ contains
         !     call ExtDat_Set(HcoState, ExtState%HNO3,   'HEMCO_HNO3_FOR_EMIS', &
         !                     RC,       FIRST,          State_HCO_chmHNO3)
         ! endif
-
-        ! Land water index (0 && some albedo param = ocean, 1 is land, 2 is ice)
-        if(ExtState%WLI%DoUse) then
-            ! warning: regrid integer values have unexpected consequences
-            call HCO_Grid_CAM2HCO_2D(State_CAM_LWI, State_HCO_WLI)
-
-            ! remap fractions to a rounded number ... hack for regridding integer values
-            do J = 1, my_JM
-                do I = 1, my_IM
-                    if(State_HCO_WLI(I,J) < 0.5) then
-                        State_HCO_WLI(I,J) = 0
-                    else
-                        if(State_HCO_WLI(I,J) < 1.5) then
-                            State_HCO_WLI(I,J) = 1
-                        else
-                            State_HCO_WLI(I,J) = 2
-                        endif
-                    endif
-                enddo
-            enddo
-
-            call ExtDat_Set(HcoState, ExtState%WLI,  'WLI_FOR_EMIS', &
-                            RC,       FIRST,         State_HCO_WLI)
-        endif
 
         !-------------------------------------------------------
         ! Compute the PBL fraction (on HEMCO grid) so we avoid an extra regrid.
@@ -1007,11 +1095,41 @@ contains
             endif
         endif
 
+        if(ExtState%FRLAND%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FRLAND, State_HCO_FRLAND)
+            call ExtDat_Set(HcoState, ExtState%FRLAND,       'FRLAND_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLAND)
+        endif
+
+        if(ExtState%FRLANDIC%DoUse) then
+            ! Unsupported - State_HCO_FRLANDIC is always zero
+            call ExtDat_Set(HcoState, ExtState%FRLANDIC,     'FRLANDIC_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLANDIC)
+        endif
+
+        if(ExtState%FROCEAN%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FROCEAN, State_HCO_FROCEAN)
+            call ExtDat_Set(HcoState, ExtState%FROCEAN,      'FROCEAN_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FROCEAN)
+        endif
+
+        if(ExtState%FRSEAICE%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_FRSEAICE, State_HCO_FRSEAICE)
+            call ExtDat_Set(HcoState, ExtState%FRSEAICE,     'FRSEAICE_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRSEAICE)
+        endif
+
+        if(ExtState%FRLAKE%DoUse) then
+            ! Unsupported - State_HCO_FRLAKE is always zero
+            call ExtDat_Set(HcoState, ExtState%FRLAKE,       'FRLAKE_FOR_EMIS', &
+                            RC,       FIRST,                 State_HCO_FRLAKE)
+        endif
+
         if(FIRST) then
             FIRST = .false.
         endif
         
-        if(masterproc) then
+        if(masterproc .and. nCalls < 10) then
             write(iulog,*) "> CAM_RegridSet_HCOI finished"
         endif
 

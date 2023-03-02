@@ -737,7 +737,8 @@ contains
         use spmd_utils,         only: iam
         use spmd_utils,         only: masterproc
 
-        use phys_grid,          only: begchunk, endchunk, get_ncols_p
+        use phys_grid,          only: get_ncols_p
+        use ppgrid,             only: begchunk, endchunk
 
         use cam_instance,       only: atm_id
 
@@ -1515,7 +1516,7 @@ contains
 !\\
 ! !INTERFACE:
 !
-    subroutine HCO_Grid_HCO2CAM_3D(hcoArray, camArray, doRegrid)
+    subroutine HCO_Grid_HCO2CAM_3D(hcoArray, camArray)
 !
 ! !USES:
 !
@@ -1533,7 +1534,6 @@ contains
 ! !OUTPUT PARAMETERS:
 !
         real(r8),         intent(inout)        :: camArray(1:LM,1:my_CE)   ! Col and lev start on 1
-        logical, optional,intent(in)           :: doRegrid
 !
 ! !REMARKS:
 !  (1) There is no vertical regridding. Also, chunk and lev indices are assumed to
@@ -1547,7 +1547,7 @@ contains
 ! !REVISION HISTORY:
 !  24 Feb 2020 - H.P. Lin    - Initial version
 !  30 May 2020 - H.P. Lin    - Remember to flip the vertical!
-!  06 Dec 2020 - H.P. Lin    - Add a kludge to skip regridding
+!  06 Dec 2020 - H.P. Lin    - Add a kludge to skip regridding (removed 12 Jan 2023)
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1556,18 +1556,9 @@ contains
 !
         character(len=*), parameter :: subname = 'HCO_Grid_HCO2CAM_3D'
         integer                     :: RC
-        logical                     :: isDoRegrid
-        ! Fortran tip: Did you know that if you specify a default value for a local variable,
-        ! it is implicitly SAVEd? Gotcha!
 
-        isDoRegrid = .true.
-        if(present(doRegrid)) then
-            isDoRegrid = doRegrid
-        endif
+        call HCO_ESMF_Set3DHCO(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
 
-        if(isDoRegrid) then
-            call HCO_ESMF_Set3DHCO(HCO_3DFld, hcoArray, my_IS, my_IE, my_JS, my_JE, 1, LM)
-        endif
 
         call ESMF_FieldRegrid(HCO_3DFld, CAM_3DFld, HCO2CAM_RouteHandle_3D,     &
                               termorderflag=ESMF_TERMORDER_SRCSEQ,              &
@@ -1577,9 +1568,7 @@ contains
         ! (field_in, data_out, IS, IE, JS, JE)
         ! For chunks, "I" is lev, "J" is chunk index, confusing, you are warned
         ! (Physics "2D" fields on mesh are actually "3D" data)
-        if(isDoRegrid) then
-            call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE, flip=.true.)
-        endif
+        call HCO_ESMF_Get2DField(CAM_3DFld, camArray, 1, LM, 1, my_CE, flip=.true.)
 
     end subroutine HCO_Grid_HCO2CAM_3D
 !EOC
