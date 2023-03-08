@@ -133,6 +133,9 @@ module hemco_interface
     integer                          :: HcoGridIM           ! # of lons
     integer                          :: HcoGridJM           ! # of lats
 
+    ! HEMCO configuration parameters that are set by namelist in CESM
+    integer                          :: HcoFixYY            ! if > 0, force 'Emission year'
+
     ! Last execution times for the HEMCO component. We are assuming that time
     ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
     integer                          :: last_HCO_day, last_HCO_second
@@ -183,8 +186,9 @@ contains
         character(len=256)           :: hemco_config_file = 'HEMCO_Config.rc'
         integer                      :: hemco_grid_xdim = 0
         integer                      :: hemco_grid_ydim = 0
+        integer                      :: hemco_emission_year = -1
 
-        namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim
+        namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim, hemco_emission_year
 
         ! Read namelist on master proc
         ! ...
@@ -204,17 +208,23 @@ contains
 
             write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
             write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
+
+            if(hemco_emission_year .gt. 0) then
+                write(iulog,*) "hemco_readnl: hemco will force emissions year at = ", hemco_emission_year
+            endif
         endif
 
         ! MPI Broadcast Namelist variables
         call mpi_bcast(hemco_config_file, len(hemco_config_file), mpi_character, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_grid_xdim, 1, mpi_integer, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_grid_ydim, 1, mpi_integer, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_emission_year, 1, mpi_integer, masterprocid, mpicom, ierr)
 
         ! Save this to the module information
         HcoConfigFile = hemco_config_file
         HcoGridIM     = hemco_grid_xdim
         HcoGridJM     = hemco_grid_ydim
+        HcoFixYY      = hemco_emission_year
     end subroutine hemco_readnl
 !EOC
 !------------------------------------------------------------------------------
@@ -321,7 +331,7 @@ contains
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CAM interface version 1.1.1"
+            write(iulog,*) "HEMCO_CESM interface version 1.1.2"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -541,6 +551,19 @@ contains
         ! FIXME: Not implementing "Dry-run" functionality in HEMCO_CESM. (hplin, 3/27/20)
         ! Phase: 0 = all, 1 = sett and switches only, 2 = fields only
         call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 1, HMRC, IsDryRun=.false.)
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CESM: Config_ReadFile has failed (1)!    "
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
+            write(iulog,*) "HEMCO configuration file could not be read."
+            write(iulog,*) "This may be due to misconfiguration of the"
+            write(iulog,*) "hemco_config_file namelist variable, or a"
+            write(iulog,*) "misformatted HEMCO configuration file."
+            write(iulog,*) "Please refer to the HEMCO.log log file in your"
+            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         ! Open the log file
@@ -550,6 +573,19 @@ contains
         endif
 
         call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CESM: Config_ReadFile has failed (2)!    "
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
+            write(iulog,*) "HEMCO configuration file could not be read."
+            write(iulog,*) "This may be due to misconfiguration of the"
+            write(iulog,*) "hemco_config_file namelist variable, or a"
+            write(iulog,*) "misformatted HEMCO configuration file."
+            write(iulog,*) "Please refer to the HEMCO.log log file in your"
+            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         !if(masterproc) write(iulog,*) "> Read HEMCO configuration file OK!"
@@ -1025,7 +1061,7 @@ contains
         logical, save                :: FIRST = .true.
 
         if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Running HCOI_Chunk_Run phase", phase
+            write(iulog,*) "HEMCO_CESM: Running HCOI_Chunk_Run phase", phase
         endif
 
         ! For phase 1, before chemistry, reset all the physics buffer contents
@@ -1076,7 +1112,7 @@ contains
         endif
 
         if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Leaving HCOI_Chunk_Run"
+            write(iulog,*) "HEMCO_CESM: Leaving HCOI_Chunk_Run"
         endif
     end subroutine HCOI_Chunk_Run
 !EOC
@@ -1165,6 +1201,7 @@ contains
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
+!  09 Mar 2023 - H.P. Lin    - Allow for FixYY in HEMCO clock for climo runs
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -1244,8 +1281,17 @@ contains
         call HCO_Grid_UpdateRegrid(RC=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
-        if(masterproc) then
-            write(iulog,*) "HEMCO_CAM: Reload (if necessary) of HEMCO Regrid descriptors"
+        !if(masterproc) then
+        !    write(iulog,*) "HEMCO_CESM: Reload (if necessary) of HEMCO Regrid descriptors"
+        !endif
+
+        !-----------------------------------------------------------------------
+        ! Allow for year forcing in climatological runs. (hplin, 3/9/23)
+        ! This is set if HcoFixYY is set in this module and is > 0
+        !-----------------------------------------------------------------------
+        if(HcoFixYY .gt. 0) then
+            ! Override the HEMCO clock FixYY property
+            HcoState%Clock%FixYY = HcoFixYY
         endif
 
         !-----------------------------------------------------------------------
@@ -1255,11 +1301,11 @@ contains
         call get_curr_time(now_day, now_s)
         call get_curr_date(year, month, day, tod)
 
-        if(masterproc) then
-            write(iulog,*) "hco year,month,day,tod", year, month, day, tod
-            write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
-            write(iulog,*) "hco now_day, now_s", now_day, now_s
-        endif
+        !if(masterproc) then
+        !    write(iulog,*) "hco year,month,day,tod", year, month, day, tod
+        !    write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
+        !    write(iulog,*) "hco now_day, now_s", now_day, now_s
+        !endif
         ! 2005 1 1 1800 | 0 0 | 0 1800
         ! 2005 1 1 3600 | 0 1800 | 0 3600
         ! 2005 1 1 5400 | 0 3600 | 0 5400
@@ -1272,7 +1318,7 @@ contains
             ! FIXME hplin 2/28/21
 
             if(masterproc) then
-                write(iulog,*) "HEMCO_CAM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
+                write(iulog,*) "HEMCO_CESM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
             endif
 
             return
@@ -1284,12 +1330,8 @@ contains
             HcoState%TS_CHEM = (now_day - prev_day) * 86400.0 + now_s - prev_s
             HcoState%TS_DYN  = (now_day - prev_day) * 86400.0 + now_s - prev_s
 
-            ! temp test - will be reset later
-            hour = get_step_size()
-
             if(masterproc) then
-                write(iulog,*) "HEMCO_CAM: Updated HEMCO timestep to ", HcoState%TS_CHEM
-                write(iulog,*) "hplin debug - step size retrieved is ", hour
+                write(iulog,*) "HEMCO_CESM: Updated HEMCO timestep to ", HcoState%TS_CHEM
             endif
         endif
 
@@ -1313,8 +1355,8 @@ contains
         ! and we want HEMCO to do the math for us. oh well
 
         !if(masterproc) then
-        !    write(6,*) "HEMCO_CAM: Updating HEMCO clock to set", year, month, day, hour, minute, second
-        !    write(6,*) "HEMCO_CAM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
+        !    write(6,*) "HEMCO_CESM: Updating HEMCO clock to set", year, month, day, hour, minute, second
+        !    write(6,*) "HEMCO_CESM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
         !endif
 
         call HCOClock_Set(HcoState, year, month, day,  &
@@ -1337,7 +1379,7 @@ contains
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=1)
 
         if(masterproc .and. nCalls < 10) then
-            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (1)"
+            write(iulog,*) "HEMCO_CESM: Finished regridding CAM met fields to HEMCO (1)"
         endif
 
         !-----------------------------------------------------------------------
@@ -1370,7 +1412,7 @@ contains
         call CAM_RegridSet_HCOI(HcoState, ExtState, Phase=2)
 
         if(masterproc .and. nCalls < 10) then
-            write(iulog,*) "HEMCO_CAM: Finished regridding CAM met fields to HEMCO (2)"
+            write(iulog,*) "HEMCO_CESM: Finished regridding CAM met fields to HEMCO (2)"
 
             ! As a test... maybe we also need to flip in the vertical
             ! write(iulog,*) State_HCO_TK(1,1,:)
@@ -1413,7 +1455,7 @@ contains
         call HCO_Run( HcoState, 1, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
-            write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1 has failed!    "
+            write(iulog,*) "HEMCO_CESM: HCO_Run Phase 1 has failed!    "
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
@@ -1424,12 +1466,12 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 1"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HCO_Run Phase 1"
 
         call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
-            write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2 has failed!    "
+            write(iulog,*) "HEMCO_CESM: HCO_Run Phase 2 has failed!    "
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
@@ -1440,7 +1482,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCO_Run Phase 2"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HCO_Run Phase 2"
 
         !-----------------------------------------------------------------------
         ! Run HEMCO Extensions!
@@ -1448,7 +1490,7 @@ contains
         call HCOX_Run(HcoState, ExtState, HMRC)
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
-            write(iulog,*) "HEMCO_CAM: HCOX_Run (extensions) has failed!"
+            write(iulog,*) "HEMCO_CESM: HCOX_Run (extensions) has failed!"
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!"
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
@@ -1459,7 +1501,7 @@ contains
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HCOX_Run"
+        if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HCOX_Run"
 
         !-----------------------------------------------------------------------
         ! Update "autofill" diagnostics.
@@ -1471,7 +1513,7 @@ contains
         call HcoDiagn_AutoUpdate(HcoState, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoDiagn_AutoUpdate"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HcoDiagn_AutoUpdate"
 
         !-----------------------------------------------------------------------
         ! Tell HEMCO we are done for this timestep...
@@ -1479,7 +1521,7 @@ contains
         call HcoClock_EmissionsDone(HcoState%Clock, HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: HcoClock_EmissionsDone"
+        !if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HcoClock_EmissionsDone"
 
         !-----------------------------------------------------------------------
         ! Do some testing and write emissions to the tape
@@ -1499,7 +1541,7 @@ contains
             ! Build history / pbuf field name (HCO_NO, HCO_CO, etc.)
             exportName = 'HCO_' // trim(HcoConfig%ModelSpc(spcID)%SpcName)
             doExport   = (FIRST .or. associated(HcoState%Spc(spcID)%Emis%Val))
-            ! if(masterproc) write(iulog,*) "HEMCO_CAM: Begin exporting " // trim(exportName)
+            ! if(masterproc) write(iulog,*) "HEMCO_CESM: Begin exporting " // trim(exportName)
 
             ! Get HEMCO emissions flux [kg/m2/s].
             ! For performance optimization ... tap into HEMCO structure directly (ugly ugly)
@@ -1530,7 +1572,7 @@ contains
                     ASSERT_(.false.)
                 endif
 
-                !if(masterproc) write(iulog,*) "HEMCO_CAM: Retrieved from HCO " // trim(exportName)
+                !if(masterproc) write(iulog,*) "HEMCO_CESM: Retrieved from HCO " // trim(exportName)
             else
                 ! No emission value. No need to run regrid, instead populate with zeros as needed
                 ! Why not populate at top, you ask? Because zeroing out arrays is expensive, and
@@ -2210,7 +2252,7 @@ contains
             endif
             Ptr2D => NULL()
             
-            if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CAM: done with exports to GEOS-Chem"
+            if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: done with exports to GEOS-Chem"
         endif
 
         ! dummy_0_CAM(:,:) = iam * 1.0_r8
@@ -2269,7 +2311,7 @@ contains
         !call HCO_Export_History_CAM3D("DIAG_CAM_TEST", dummy_0_CAM)
 
         if(masterproc .and. nCalls < 10) then
-            write(iulog,*) "HEMCO_CAM: Exports completed for this timestep!"
+            write(iulog,*) "HEMCO_CESM: Exports completed for this timestep!"
         endif
 
         !-----------------------------------------------------------------------
