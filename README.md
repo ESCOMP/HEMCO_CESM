@@ -10,12 +10,14 @@ This is the official repository for the **HEMCO-CESM** interface, coupling the [
 
 :book: Reference: [Lin et al., 2021](https://gmd.copernicus.org/articles/14/5487/2021/gmd-14-5487-2021.html)
 
+:envelope: Maintainer: [Haipeng Lin](https://github.com/jimmielin) (hplin@seas.harvard.edu). Please post an issue or pull request in this repository if your request is code-related.
+
 ## How to checkout and use:
 Currently HEMCO can only operate on a slightly modified version of CAM. The corresponding [pull request](https://github.com/ESCOMP/CAM/pull/560) is currently under discussion.
 
 **Warning: Unsupported CAM development code is unsupported. You have been warned.**
 
-The forked repository contains `[hemco]` as an external to be deployed inside CAM in `cam/src/hemco`.
+The forked repository contains this repository as an external (`[hemco]`) to be deployed inside CAM in `cam/src/hemco`.
 
 ## Main components:
 * `/HEMCO/src/`: Contains the source for the [HEMCO emissions component](https://github.com/geoschem/HEMCO), imported using `manage_externals` (see `Externals_HCO.cfg`)
@@ -26,6 +28,9 @@ The forked repository contains `[hemco]` as an external to be deployed inside CA
 
 ### Auxiliary components:
 * `/hco_esmf_wrappers.F90`: Helper routines
+
+### Configuration files
+...are available in the [HEMCO_CESM_configs](https://github.com/jimmielin/HEMCO_CESM_configs) repository with [instructions on how to translate GEOS-Chem emission species to CAM-chem](https://github.com/jimmielin/HEMCO_CESM_configs/blob/master/CAM-Chem/Mapping_Process.md).
 
 ## License
 ```
