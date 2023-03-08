@@ -193,7 +193,6 @@ contains
         ! Read namelist on master proc
         ! ...
         if(masterproc) then
-            write(iulog,*) "This is hemco_readnl - Reading HEMCO Namelist in CESM"
             unitn = getunit()
             open(unitn, file=trim(nlfile), status='old')
             call find_group_name(unitn, 'hemco_nl', status=ierr)
@@ -211,6 +210,8 @@ contains
 
             if(hemco_emission_year .gt. 0) then
                 write(iulog,*) "hemco_readnl: hemco will force emissions year at = ", hemco_emission_year
+            else
+                write(iulog,*) "hemco_readnl: hemco will use emissions from the CESM clock"
             endif
         endif
 
