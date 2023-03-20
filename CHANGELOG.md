@@ -2,6 +2,10 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.1.3] - 2023-03-20
+### Fixed
+- Fixed wrong definition of `ExtState%TSKIN`. Now correctly uses SST from `cam_in%sst`.
+
 ## [1.1.2] - 2023-03-08
 ### Added
 - Support the `hemco_emission_year` namelist option to force emission cycling year (equivalent to `HEMCO_Config.rc`'s `Emission year:` option) from CESM compsets
