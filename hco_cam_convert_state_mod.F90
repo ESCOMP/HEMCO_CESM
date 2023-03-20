@@ -141,6 +141,7 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_CAM_pblh(:)
 
     real(r8), pointer, public        :: State_CAM_TS(:)
+    real(r8), pointer, public        :: State_CAM_SST(:)
     real(r8), pointer, public        :: State_CAM_U10M(:)
     real(r8), pointer, public        :: State_CAM_V10M(:)
     real(r8), pointer, public        :: State_CAM_ALBD(:)
@@ -192,6 +193,7 @@ module hco_cam_convert_state_mod
     real(r8), pointer, public        :: State_HCO_PBLH(:,:)   ! PBLH [m]
 
     real(r8), pointer, public        :: State_HCO_TS(:,:)
+    real(r8), pointer, public        :: State_HCO_TSKIN(:,:)
     real(r8), pointer, public        :: State_HCO_U10M(:,:)
     real(r8), pointer, public        :: State_HCO_V10M(:,:)
     real(r8), pointer, public        :: State_HCO_ALBD(:,:)
@@ -328,6 +330,8 @@ contains
         ! For HEMCO extensions...
         allocate(State_CAM_TS   (my_CE), stat=RC)
         ASSERT_(RC==0)
+        allocate(State_CAM_SST  (my_CE), stat=RC)
+        ASSERT_(RC==0)
         allocate(State_CAM_U10M (my_CE), stat=RC)
         ASSERT_(RC==0)
         allocate(State_CAM_V10M (my_CE), stat=RC)
@@ -388,6 +392,7 @@ contains
         ! On HEMCO grid
         allocate(State_HCO_AIR(my_IM, my_JM, LM), stat=RC)
         allocate(State_HCO_TS(my_IM, my_JM), stat=RC)
+        allocate(State_HCO_TSKIN(my_IM, my_JM), stat=RC)
         allocate(State_HCO_U10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_V10M(my_IM, my_JM), stat=RC)
         allocate(State_HCO_ALBD(my_IM, my_JM), stat=RC)
@@ -416,6 +421,7 @@ contains
         State_GC_PSC2_DRY(:,:) = 0.0_r8
         State_HCO_TK(:,:,:) = 0.0_r8
         State_HCO_TS(:,:) = 0.0_r8
+        State_HCO_TSKIN(:,:) = 0.0_r8
         State_HCO_U10M(:,:) = 0.0_r8
         State_HCO_V10M(:,:) = 0.0_r8
         State_HCO_ALBD(:,:) = 0.0_r8
@@ -669,6 +675,7 @@ contains
                     State_CAM_t(K,I) = phys_state(lchnk)%t(J,K)
 
                     ! FIXME: hplin, check if indices actually exist!!
+                    ! Chemical concentrations should be in MMR [kg/kg air]
                     State_CAM_chmO3(K,I) = phys_state(lchnk)%q(J,K,id_O3)
                     State_CAM_chmNO(K,I) = phys_state(lchnk)%q(J,K,id_NO)
                     State_CAM_chmNO2(K,I) = phys_state(lchnk)%q(J,K,id_NO2)
@@ -710,10 +717,16 @@ contains
                 ! Dry pressure [hPa] (Pa -> hPa, x0.01)
                 State_CAM_psdry(I) = phys_state(lchnk)%psdry(J) * 0.01_r8
 
-                ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
-                ! hplin 12/21/2020
-                if(ExtState%T2M%DoUse .or. ExtState%TSKIN%DoUse) then
+                ! Surface temperature [K]
+                if(ExtState%T2M%DoUse) then
                     State_CAM_TS(I) = cam_in(lchnk)%TS(J)
+                endif
+
+                ! Sea surface temperature [K]
+                ! DO NOT use TS - the definition in CESM-GC is wrong and will give wrong SST values
+                ! which are too high, and the ocean being too warm will cause huge issues with Iodine emis.
+                if(ExtState%TSKIN%DoUse) then
+                    State_CAM_SST(I) = cam_in(lchnk)%sst(J)
                 endif
 
                 ! 10M E/W and N/S wind speed [m/s] (fixme: use pver?)
@@ -908,19 +921,19 @@ contains
         !-----------------------------------------------------------------------
         ! Surface temperature [K] - use both for T2M and TSKIN for now according to CESM-GC,
         ! hplin 12/21/2020
-        if(ExtState%T2M%DoUse .or. ExtState%TSKIN%DoUse) then
+        if(ExtState%T2M%DoUse) then
             call HCO_Grid_CAM2HCO_2D(State_CAM_TS, State_HCO_TS    )
-
-            ! Point to appropriate location
-            call ExtDat_Set(HcoState, ExtState%TSKIN, 'TSKIN_FOR_EMIS', &
-                            RC,       FIRST,          State_HCO_TS)
 
             call ExtDat_Set(HcoState, ExtState%T2M,  'T2M_FOR_EMIS', &
                             RC,       FIRST,          State_HCO_TS)
-        
-            ! if(masterproc) then
-            !     write(iulog,*) "HCO CAM_Convert_State: after ExtDat_Set T2M"
-            ! endif
+        endif
+
+        ! Sea surface temperature [K] (hplin 3/20/23)
+        if(ExtState%TSKIN%DoUse) then
+            call HCO_Grid_CAM2HCO_2D(State_CAM_SST, State_HCO_TSKIN)
+
+            call ExtDat_Set(HcoState, ExtState%TSKIN, 'TSKIN_FOR_EMIS', &
+                            RC,       FIRST,          State_HCO_TSKIN)
         endif
 
         ! 10M E/W and N/S wind speed [m/s] (fixme: use pver?)
