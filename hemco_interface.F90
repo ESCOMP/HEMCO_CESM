@@ -332,7 +332,7 @@ contains
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CESM interface version 1.1.2"
+            write(iulog,*) "HEMCO_CESM interface version 1.1.4"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -1065,25 +1065,6 @@ contains
             write(iulog,*) "HEMCO_CESM: Running HCOI_Chunk_Run phase", phase
         endif
 
-        ! For phase 1, before chemistry, reset all the physics buffer contents
-        ! to prevent trash data being read by other components.
-        ! (hplin, 12/15/20)
-        if(phase == 1) then
-
-            ! Only need to do this once to save time
-            if(FIRST) then
-
-                ! Pass the pbuf to the hco_cam_exports component so she has it...
-                hco_pbuf2d => pbuf2d
-
-                call HCOI_Initialize_Pbuf()
-
-                ! No longer first call
-                FIRST = .false.
-
-            endif
-        endif
-
         ! We only run the gridded components on Phase 2 per recommendations
         ! from Steve, but this can be easily extended.
         !
@@ -1097,8 +1078,24 @@ contains
         ! run routine in the gridded component HCO_GC_Run.
         ! (hplin, 2/6/20)
         if(phase == 2) then
+            ! Only need to do this once to save time.
+            ! reset all the physics buffer contents
+            ! to prevent trash data being read by other components.
+            ! (hplin, 12/15/20)
+            if(FIRST) then
+
+                ! Pass the pbuf to the hco_cam_exports component so she has it...
+                hco_pbuf2d => pbuf2d
+
+                call HCOI_Initialize_Pbuf()
+
+                ! No longer first call
+                FIRST = .false.
+
+            endif
+
             ! Pass the pbuf to the hco_cam_exports component so she has it...
-            hco_pbuf2d => pbuf2d
+            ! hco_pbuf2d => pbuf2d
 
             ! Set fields from CAM state before run
             call CAM_GetBefore_HCOI(cam_in, phys_state, pbuf2d, phase, &
