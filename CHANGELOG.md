@@ -2,6 +2,15 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.1.5] - 2023-06-01
+### Changed
+- **Based off upstream HEMCO 3.6.2-cesm** - out of band release for CESM NAG compiler compatibility.
+- Fixes for NAG compiler.
+
+## [1.1.4] - 2023-04-12
+### Changed
+- HEMCO-CESM now runs only on CAM phase 2 and clears pbuf at that phase. Phase 1 is now unused. Interface remains unchanged and is backwards compatible.
+
 ## [1.1.3] - 2023-03-20
 ### Fixed
 - Fixed wrong definition of `ExtState%TSKIN`. Now correctly uses SST from `cam_in%sst`.
