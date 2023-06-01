@@ -1,5 +1,5 @@
-#define VERIFY_(A) if(.not.HCO_ESMF_VRFY(A,subname,__LINE__))call exit(-1)
-#define ASSERT_(A) if(.not.HCO_ESMF_ASRT(A,subname,__LINE__))call exit(-1)
+#define VERIFY_(A) if(.not.HCO_ESMF_VRFY(A,subname,__LINE__)) stop -1
+#define ASSERT_(A) if(.not.HCO_ESMF_ASRT(A,subname,__LINE__)) stop -1
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
 !------------------------------------------------------------------------------
