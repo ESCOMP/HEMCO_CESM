@@ -332,7 +332,7 @@ contains
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CESM interface version 1.1.4"
+            write(iulog,*) "HEMCO_CESM interface version 1.1.6"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "Config File: ", HcoConfigFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -1555,6 +1555,10 @@ contains
 
                     ! Regrid exportFldHco to CAM grid...
                     call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+
+                    ! Debug only: Output data for debug and comparing against logs
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " HCO min max sum ", minval(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM)), maxval(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM)), sum(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM))
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " CAM min max sum ", minval(exportFldCAM), maxval(exportFldCAM), sum(exportFldCAM)
                 elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
                     ! Zero out quantities first
                     exportFldHco2(:,:) = 0.0_r8
@@ -1566,6 +1570,10 @@ contains
 
                     ! Regrid exportFldHco to CAM grid...
                     call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+
+                    ! Debug only: Output data for debug and comparing against logs
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " HCO min max sum ", minval(exportFldHco2(my_IS:my_IE,my_JS:my_JE)), maxval(exportFldHco2(my_IS:my_IE,my_JS:my_JE)), sum(exportFldHco2(my_IS:my_IE,my_JS:my_JE))
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " CAM min max sum ", minval(exportFldCAM2), maxval(exportFldCAM2), sum(exportFldCAM2)
                 else
                     ASSERT_(.false.)
                 endif
