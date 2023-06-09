@@ -2,6 +2,10 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.1.6] - 2023-06-08
+### Fixed
+- Bit-for-bit match in identical runs now ensured through `smm_pipelinedep` fixed to 16, similarly to `ionosphere/waccmx/edyn_esmf.F90`, instead of automatic tuning.
+
 ## [1.1.5] - 2023-06-01
 ### Changed
 - **Based off upstream HEMCO 3.6.2-cesm** - out of band release for CESM NAG compiler compatibility.
