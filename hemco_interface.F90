@@ -20,16 +20,26 @@ module hemco_interface
 ! !USES:
 !
     ! ESMF function wrappers
-    use hco_esmf_wrappers
+    use hco_esmf_wrappers,        only: HCO_ESMF_VRFY, HCO_ESMF_ASRT
 
-    ! HEMCO ESMF Grid helpers
-    use hco_esmf_grid
+    ! HEMCO ESMF Grid helpers and properties
+    use hco_esmf_grid,            only: HCO_Grid_Init, HCO_Grid_UpdateRegrid
+    use hco_esmf_grid,            only: HCO_Grid_HCO2CAM_2D, HCO_Grid_HCO2CAM_3D
+    use hco_esmf_grid,            only: HCO_Grid_CAM2HCO_2D, HCO_Grid_CAM2HCO_3D
+    use hco_esmf_grid,            only: IM, JM, LM
+    use hco_esmf_grid,            only: XMid, XEdge, YMid, YEdge, YEdge_R, YSin, AREA_M2, Ap, Bp
+    use hco_esmf_grid,            only: my_IM, my_JM
+    use hco_esmf_grid,            only: my_IS, my_IE, my_JS, my_JE, my_CE
 
     ! CAM export helpers
-    use hco_cam_exports
+    use hco_cam_exports,          only: HCO_Exports_Init
+    use hco_cam_exports,          only: HCO_Export_Pbuf_AddField
+    use hco_cam_exports,          only: HCO_Export_History_CAM2D, HCO_Export_History_CAM3D
+    use hco_cam_exports,          only: HCO_Export_Pbuf_CAM2D, HCO_Export_Pbuf_CAM3D
+    use hco_cam_exports,          only: hco_pbuf2d  ! Allow for pbuf handler to be passed to exports component.
 
     ! CAM import helpers
-    use hco_cam_convert_state_mod
+    use hco_cam_convert_state_mod,only: HCOI_Allocate_All, CAM_GetBefore_HCOI, CAM_RegridSet_HCOI
 
     ! Controls
     use cam_abortutils,           only: endrun      ! fatal terminator
@@ -123,7 +133,9 @@ module hemco_interface
     type(ESMF_GridComp)              :: HCO_GridComp        ! HEMCO GridComp
     type(ESMF_State)                 :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
 
-    character(len=256)               :: HcoConfigFile       ! HEMCO configuration file loc
+    character(len=256)               :: HcoRoot             ! HEMCO data root path
+    character(len=256)               :: HcoConfigFile       ! HEMCO configuration file path
+    character(len=256)               :: HcoDiagnFile        ! HEMCO diagnostics config file path
     type(ConfigObj), pointer         :: HcoConfig => NULL()
 
     type(HCO_State), pointer, public :: HcoState  => NULL()
@@ -183,12 +195,14 @@ contains
 !
         integer :: unitn, ierr
         character(len=*), parameter  :: subname = 'hemco_readnl'
+        character(len=256)           :: hemco_data_root = ''
         character(len=256)           :: hemco_config_file = 'HEMCO_Config.rc'
+        character(len=256)           :: hemco_diagn_file = 'HEMCO_Diagn.rc'
         integer                      :: hemco_grid_xdim = 0
         integer                      :: hemco_grid_ydim = 0
         integer                      :: hemco_emission_year = -1
 
-        namelist /hemco_nl/ hemco_config_file, hemco_grid_xdim, hemco_grid_ydim, hemco_emission_year
+        namelist /hemco_nl/ hemco_data_root, hemco_config_file, hemco_diagn_file, hemco_grid_xdim, hemco_grid_ydim, hemco_emission_year
 
         ! Read namelist on master proc
         ! ...
@@ -205,7 +219,9 @@ contains
             close(unitn)
             call freeunit(unitn)
 
-            write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
+            write(iulog,*) "hemco_readnl: hemco data root is at = ", trim(hemco_data_root)
+            write(iulog,*) "hemco_readnl: hemco config file = ", trim(hemco_config_file)
+            write(iulog,*) "hemco_readnl: hemco diagn file = ", trim(hemco_diagn_file)
             write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
 
             if(hemco_emission_year .gt. 0) then
@@ -216,13 +232,17 @@ contains
         endif
 
         ! MPI Broadcast Namelist variables
+        call mpi_bcast(hemco_data_root, len(hemco_data_root), mpi_character, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_config_file, len(hemco_config_file), mpi_character, masterprocid, mpicom, ierr)
+        call mpi_bcast(hemco_diagn_file, len(hemco_diagn_file), mpi_character, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_grid_xdim, 1, mpi_integer, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_grid_ydim, 1, mpi_integer, masterprocid, mpicom, ierr)
         call mpi_bcast(hemco_emission_year, 1, mpi_integer, masterprocid, mpicom, ierr)
 
         ! Save this to the module information
+        HcoRoot       = hemco_data_root
         HcoConfigFile = hemco_config_file
+        HcoDiagnFile  = hemco_diagn_file
         HcoGridIM     = hemco_grid_xdim
         HcoGridJM     = hemco_grid_ydim
         HcoFixYY      = hemco_emission_year
@@ -276,6 +296,10 @@ contains
         use HCO_Types_Mod,    only: ListCont
         use HCO_VertGrid_Mod, only: HCO_VertGrid_Define
 
+        ! For some overriding work in HEMCO configuration
+        use HCO_ExtList_Mod,  only: CoreNr
+        use HCO_Types_Mod,    only: Opt, Ext
+
         ! HEMCO extensions initialization
         use HCOX_Driver_Mod,  only: HCOX_Init
 !
@@ -287,6 +311,7 @@ contains
 !  15 Dec 2020 - H.P. Lin    - Implement HEMCO extensions that do require met
 !  23 Mar 2021 - H.P. Lin    - Now export for diagnostics too
 !  12 Jan 2023 - H.P. Lin    - Optimize memory usage by only allocating 2-D/3-D as needed
+!  15 Jun 2023 - H.P. Lin    - Now override HEMCO_Diagn.rc file path and ROOT path in CESM env.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
@@ -326,15 +351,22 @@ contains
         ! Temporaries
         logical                      :: IsExtfrc3DEmis
 
+        ! Temporaries for HEMCO cycling
+        logical                      :: OptFound
+        type(Ext), pointer           :: ThisExt
+        type(Opt), pointer           :: ThisOpt
+
         !-----------------------------------------------------------------------
 
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CESM interface version 1.1.4"
+            write(iulog,*) "HEMCO_CESM interface version 1.2.0"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
+            write(iulog,*) "ROOT: ", HcoRoot
             write(iulog,*) "Config File: ", HcoConfigFile
+            write(iulog,*) "Diagn File: ", HcoDiagnFile
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
         endif
 
@@ -744,9 +776,80 @@ contains
         !if(masterproc) write(iulog,*) "> Set HEMCO PET-local grid info OK!"
 
         !-----------------------------------------------------------------------
+        ! Override HEMCO diagnostic file and root file paths in CESM environment
+        ! This is so that the configuration file $ROOT and $DiagnFile do not
+        ! have to contain hard-coded paths and can be distributed by cesmdata
+        ! agnostically of the running environment. (hplin, 6/15/23)
+        !-----------------------------------------------------------------------
+        ! ROOT property. This is retrieved in several forms within the HEMCO code:
+        !   hco_extlist_mod::HCO_ROOT(HcoConfig) --> HcoConfig%ROOT (populated by HCO_SetDefaultToken)
+        !   hco_extlist_mod::HCO_GetOpt(ExtList, 'ROOT', -1) --> extension opt linked list
+        ! looks like most of HEMCO convention will use HcoConfig%ROOT which is good.
+        ! the $ROOT token replacement happens in hco_chartools_mod which uses HCO_ROOT().
+        !
+        ! the property has to be updated right after HCO_SetDefaultToken and values
+        ! appropriately updated so that retrieval will use the overridden property.
+        ! This means it has to go right after Config_ReadFile.
+
+        ! This might not be sufficient to update the configuration within the extlist -1.
+        HcoConfig%ROOT = HcoRoot
+
+        ! DiagnFile property. This is part of the extension options and we replicate
+        ! some of the functionality in order to override it here. Maybe this work could
+        ! be done upstream.
+        OptFound = .false.
+        ThisOpt => NULL()
+        ThisExt => NULL()
+        ThisExt => HcoConfig%ExtList
+        do while(associated(ThisExt))
+            if(ThisExt%ExtNr /= CoreNr) then    ! Looking for the core extension.
+                ThisExt => ThisExt%NextExt
+                cycle
+            endif
+
+            ThisOpt => ThisExt%Opts
+            do while(associated(ThisOpt))
+                if(trim(ThisOpt%OptName) == "DiagnFile") then
+                    ThisOpt%OptValue = HcoDiagnFile
+                    OptFound = .true.
+                    exit
+                endif
+
+                ThisOpt => ThisOpt%NextOpt
+            enddo
+
+            if(OptFound) then
+                ThisExt => NULL()
+            else
+                ThisExt => ThisExt%NextExt
+            endif
+        enddo
+
+        ThisOpt => NULL()
+        ThisExt => NULL()
+
+        !-----------------------------------------------------------------------
         ! Initialize HEMCO!
+        ! The following actions happen during initialization:
+        ! 1) time slice pointers (tIDx_Init)
+        ! 2) clock initialization (HcoClock_Init populates HcoState%Clock)
+        ! 3) HEMCO diagnostic containers are initialized (HcoDiagn_Init)
+        ! 4) configuration file initializes ReadList
+        ! 5) universal scale factor for each HEMCO species (Hco_ScaleInit)
         !-----------------------------------------------------------------------
         call HCO_Init(HcoState, HMRC)
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CESM: HCO_Init has failed!"
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!"
+            write(iulog,*) "HEMCO could not be initialized."
+            write(iulog,*) "This may be due to misconfiguration of the"
+            write(iulog,*) "HEMCO configuration file."
+            write(iulog,*) "Please refer to the HEMCO.log log file and"
+            write(iulog,*) "the cesm.log. log files in your case run directory"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
@@ -1184,6 +1287,9 @@ contains
         ! Physical constants
         use physconst,              only : mwdry
 
+        ! Necessary imported properties for physics calculations
+        use hco_cam_convert_state_mod, only: State_HCO_PSFC, State_HCO_TK, State_HCO_PBLH, State_CAM_chmDMS
+        use hco_cam_convert_state_mod, only: State_CAM_chmACET, State_CAM_chmALD2, State_CAM_chmMOH, State_CAM_chmMENO3, State_CAM_DELP_DRYs, State_CAM_chmETNO3
 
 !
 ! !INPUT/OUTPUT PARAMETERS:
@@ -1286,6 +1392,10 @@ contains
         !-----------------------------------------------------------------------
         ! Allow for year forcing in climatological runs. (hplin, 3/9/23)
         ! This is set if HcoFixYY is set in this module and is > 0
+        !
+        ! This is set in the run routine because HEMCO clock is initialized at
+        ! HCO_INIT -> HcoClock_Init, so it was not available until very late in
+        ! the Init phase. But maybe it could be moved up as well.
         !-----------------------------------------------------------------------
         if(HcoFixYY .gt. 0) then
             ! Override the HEMCO clock FixYY property
@@ -1555,6 +1665,10 @@ contains
 
                     ! Regrid exportFldHco to CAM grid...
                     call HCO_Grid_HCO2CAM_3D(exportFldHco, exportFldCAM)
+
+                    ! Debug only: Output data for debug and comparing against logs
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " HCO min max sum ", minval(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM)), maxval(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM)), sum(exportFldHco(my_IS:my_IE,my_JS:my_JE,1:LM))
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " CAM min max sum ", minval(exportFldCAM), maxval(exportFldCAM), sum(exportFldCAM)
                 elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
                     ! Zero out quantities first
                     exportFldHco2(:,:) = 0.0_r8
@@ -1566,6 +1680,10 @@ contains
 
                     ! Regrid exportFldHco to CAM grid...
                     call HCO_Grid_HCO2CAM_2D(exportFldHco2, exportFldCAM2)
+
+                    ! Debug only: Output data for debug and comparing against logs
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " HCO min max sum ", minval(exportFldHco2(my_IS:my_IE,my_JS:my_JE)), maxval(exportFldHco2(my_IS:my_IE,my_JS:my_JE)), sum(exportFldHco2(my_IS:my_IE,my_JS:my_JE))
+                    ! if(masterproc) write(iulog, *) "HEMCO_CESM debug ", trim(exportName), " CAM min max sum ", minval(exportFldCAM2), maxval(exportFldCAM2), sum(exportFldCAM2)
                 else
                     ASSERT_(.false.)
                 endif

@@ -792,7 +792,8 @@ contains
 
         ! Parameters for ESMF RouteHandle (taken from ionos interface)
         smm_srctermproc =  0
-        smm_pipelinedep = -1 ! Accept auto-tuning of the pipeline depth
+        ! smm_pipelinedep = -1 ! Accept auto-tuning of the pipeline depth
+        smm_pipelinedep =  16  ! Prescribe pipeline depth for BFB consistency (hplin, 6/7/23)
 
         ! Check if we need to update
         if(cam_last_atm_id == atm_id) then
@@ -861,7 +862,7 @@ contains
         if(masterproc) then
             write(iulog,*) ">> After FieldRegridStore, CAM2D->HCO2D, pipeline", smm_pipelinedep
         endif
-        smm_pipelinedep = -1
+        ! smm_pipelinedep = -1   ! Only replace with -1 to accept auto-tuning of smm pipeline depth.
 
         ! Create and store ESMF route handles for regridding CAM <-> HCO
         ! CAM -> HCO 3-D
@@ -878,7 +879,7 @@ contains
         if(masterproc) then
             write(iulog,*) ">> After FieldRegridStore, CAM3D->HCO3D, pipeline", smm_pipelinedep
         endif
-        smm_pipelinedep = -1
+        ! smm_pipelinedep = -1   ! Only replace with -1 to accept auto-tuning of smm pipeline depth.
 
         ! HCO -> CAM 2-D
         call ESMF_FieldRegridStore(                                &
@@ -893,7 +894,7 @@ contains
         if(masterproc) then
             write(iulog,*) ">> After FieldRegridStore, HCO2D->CAM2D, pipeline", smm_pipelinedep
         endif
-        smm_pipelinedep = -1
+        ! smm_pipelinedep = -1   ! Only replace with -1 to accept auto-tuning of smm pipeline depth.
 
         ! HCO -> CAM 3-D
         ! 3-D conserv. regridding cannot be done on a stagger other than center
