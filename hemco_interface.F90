@@ -219,9 +219,9 @@ contains
             close(unitn)
             call freeunit(unitn)
 
-            write(iulog,*) "hemco_readnl: hemco data root is at = ", hemco_data_root
-            write(iulog,*) "hemco_readnl: hemco config file = ", hemco_config_file
-            write(iulog,*) "hemco_readnl: hemco diagn file = ", hemco_diagn_file
+            write(iulog,*) "hemco_readnl: hemco data root is at = ", trim(hemco_data_root)
+            write(iulog,*) "hemco_readnl: hemco config file = ", trim(hemco_config_file)
+            write(iulog,*) "hemco_readnl: hemco diagn file = ", trim(hemco_diagn_file)
             write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
 
             if(hemco_emission_year .gt. 0) then
@@ -838,6 +838,18 @@ contains
         ! 5) universal scale factor for each HEMCO species (Hco_ScaleInit)
         !-----------------------------------------------------------------------
         call HCO_Init(HcoState, HMRC)
+        if(masterproc .and. HMRC /= HCO_SUCCESS) then
+            write(iulog,*) "******************************************"
+            write(iulog,*) "HEMCO_CESM: HCO_Init has failed!"
+            write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!"
+            write(iulog,*) "HEMCO could not be initialized."
+            write(iulog,*) "This may be due to misconfiguration of the"
+            write(iulog,*) "HEMCO configuration file."
+            write(iulog,*) "Please refer to the HEMCO.log log file and"
+            write(iulog,*) "the cesm.log. log files in your case run directory"
+            write(iulog,*) "for more information."
+            write(iulog,*) "******************************************"
+        endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "> HEMCO initialized successfully!"
