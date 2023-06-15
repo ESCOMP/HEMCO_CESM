@@ -2,6 +2,16 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.2.0] - 2023-06-15
+### Added
+- Support the `hemco_data_root` property to override `$ROOT` in HEMCO configuration file in the CESM environment.
+- Support the `hemco_diagn_file` property to override `DiagnFile` in HEMCO configuration file in the CESM environment.
+
+### Changed
+- Code now uses explicit `only` includes for `hemco_interface.F90`.
+- Improved error handling for `HCO_Init` call to point user to correct error messages.
+- Improved debug outputs throughout.
+
 ## [1.1.6] - 2023-06-08
 ### Fixed
 - Bit-for-bit match in identical runs now ensured through `smm_pipelinedep` fixed to 16, similarly to `ionosphere/waccmx/edyn_esmf.F90`, instead of automatic tuning.
