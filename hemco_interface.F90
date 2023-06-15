@@ -36,6 +36,7 @@ module hemco_interface
     use hco_cam_exports,          only: HCO_Export_Pbuf_AddField
     use hco_cam_exports,          only: HCO_Export_History_CAM2D, HCO_Export_History_CAM3D
     use hco_cam_exports,          only: HCO_Export_Pbuf_CAM2D, HCO_Export_Pbuf_CAM3D
+    use hco_cam_exports,          only: hco_pbuf2d  ! Allow for pbuf handler to be passed to exports component.
 
     ! CAM import helpers
     use hco_cam_convert_state_mod,only: HCOI_Allocate_All, CAM_GetBefore_HCOI, CAM_RegridSet_HCOI
@@ -132,7 +133,9 @@ module hemco_interface
     type(ESMF_GridComp)              :: HCO_GridComp        ! HEMCO GridComp
     type(ESMF_State)                 :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
 
-    character(len=256)               :: HcoConfigFile       ! HEMCO configuration file loc
+    character(len=256)               :: HcoRoot             ! HEMCO data root path
+    character(len=256)               :: HcoConfigFile       ! HEMCO configuration file path
+    character(len=256)               :: HcoDiagnFile        ! HEMCO diagnostics config file path
     type(ConfigObj), pointer         :: HcoConfig => NULL()
 
     type(HCO_State), pointer, public :: HcoState  => NULL()
@@ -350,8 +353,8 @@ contains
 
         ! Temporaries for HEMCO cycling
         logical                      :: OptFound
-        type(Ext)                    :: ThisExt
-        type(Opt)                    :: ThisOpt
+        type(Ext), pointer           :: ThisExt
+        type(Opt), pointer           :: ThisOpt
 
         !-----------------------------------------------------------------------
 
@@ -1272,6 +1275,9 @@ contains
         ! Physical constants
         use physconst,              only : mwdry
 
+        ! Necessary imported properties for physics calculations
+        use hco_cam_convert_state_mod, only: State_HCO_PSFC, State_HCO_TK, State_HCO_PBLH, State_CAM_chmDMS
+        use hco_cam_convert_state_mod, only: State_CAM_chmACET, State_CAM_chmALD2, State_CAM_chmMOH, State_CAM_chmMENO3, State_CAM_DELP_DRYs, State_CAM_chmETNO3
 
 !
 ! !INPUT/OUTPUT PARAMETERS:
