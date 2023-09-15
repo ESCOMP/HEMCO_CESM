@@ -2,6 +2,10 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.2.1] - 2023-09-15
+### Fixed
+- **Based off upstream HEMCO 3.6.3-cesm** - release for CESM to fix `nvhpc` compiler compatibility issues.
+
 ## [1.2.0] - 2023-06-15
 ### Added
 - Support the `hemco_data_root` property to override `$ROOT` in HEMCO configuration file in the CESM environment.
