@@ -268,6 +268,7 @@ contains
         use cam_logfile,      only: iulog
         use spmd_utils,       only: masterproc, mpicom, masterprocid
         use spmd_utils,       only: npes, iam
+        use perf_mod,         only: t_startf, t_stopf
 
         use mpi,              only: MPI_INTEGER
         use ESMF,             only: ESMF_VM, ESMF_VMGetCurrent, ESMF_VMGet
@@ -358,11 +359,13 @@ contains
 
         !-----------------------------------------------------------------------
 
+        call t_startf('HCOI_Chunk_Init')
+
         if(masterproc) then
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CESM interface version 1.2.2"
+            write(iulog,*) "HEMCO_CESM interface version 1.3.0"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "ROOT: ", HcoRoot
             write(iulog,*) "Config File: ", HcoConfigFile
@@ -837,6 +840,7 @@ contains
         ! 4) configuration file initializes ReadList
         ! 5) universal scale factor for each HEMCO species (Hco_ScaleInit)
         !-----------------------------------------------------------------------
+        call t_startf('HCO_HCOX_Init')
         call HCO_Init(HcoState, HMRC)
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
@@ -861,6 +865,7 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc) write(iulog,*) "> HEMCO extensions initialized successfully!"
+        call t_stopf('HCO_HCOX_Init')
 
         !-----------------------------------------------------------------------
         ! Additional exports: Verify if additional diagnostic quantities
@@ -1051,6 +1056,8 @@ contains
                 write(iulog,*) "> HEMCO additional exports for CESM2-GC initialized!"
             endif
         endif
+
+        call t_stopf('HCOI_Chunk_Init')
     end subroutine HCOI_Chunk_Init
 !EOC
 !------------------------------------------------------------------------------
@@ -1140,6 +1147,9 @@ contains
         use cam_logfile,    only: iulog
         use spmd_utils,     only: masterproc, mpicom, masterprocid, iam
 
+        ! Performance timers
+        use perf_mod,       only: t_startf, t_stopf
+
         ! ESMF
         use ESMF,           only: ESMF_GridCompRun
 
@@ -1163,6 +1173,8 @@ contains
         integer                      :: RC                        ! Return code
 
         logical, save                :: FIRST = .true.
+
+        call t_startf('HCOI_Chunk_Run')
 
         if(masterproc) then
             write(iulog,*) "HEMCO_CESM: Running HCOI_Chunk_Run phase", phase
@@ -1201,13 +1213,17 @@ contains
             ! hco_pbuf2d => pbuf2d
 
             ! Set fields from CAM state before run
+            call t_startf('HCO_CAM_GetBefore_HCOI')
             call CAM_GetBefore_HCOI(cam_in, phys_state, pbuf2d, phase, &
                                     HcoState, ExtState)
+            call t_stopf('HCO_CAM_GetBefore_HCOI')
 
             ! Run the gridded component.
+            call t_startf('HCO_GridCompRun')
             call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
                                                 !exportState=HCO_GridCompState, &
                                                 !rc=RC)
+            call t_stopf('HCO_GridCompRun')
 
             ASSERT_(RC==ESMF_SUCCESS)
         endif
@@ -1215,6 +1231,8 @@ contains
         if(masterproc) then
             write(iulog,*) "HEMCO_CESM: Leaving HCOI_Chunk_Run"
         endif
+
+        call t_stopf('HCOI_Chunk_Run')
     end subroutine HCOI_Chunk_Run
 !EOC
 !------------------------------------------------------------------------------
@@ -1265,27 +1283,30 @@ contains
 !
 ! !USES:
 !
-        use cam_logfile,            only: iulog
-        use spmd_utils,             only: masterproc, iam
+        use cam_logfile,               only: iulog
+        use spmd_utils,                only: masterproc, iam
+
+        ! Performance timers
+        use perf_mod,                  only: t_startf, t_stopf
 
         ! HEMCO
-        use HCO_Interface_Common,   only: GetHcoVal, GetHcoDiagn
-        use HCO_Clock_Mod,          only: HcoClock_Set, HcoClock_Get
-        use HCO_Clock_Mod,          only: HcoClock_EmissionsDone
-        use HCO_Diagn_Mod,          only: HcoDiagn_AutoUpdate
-        use HCO_Driver_Mod,         only: HCO_Run
-        use HCO_EmisList_Mod,       only: Hco_GetPtr
-        use HCO_Calc_Mod,           only: Hco_EvalFld
-        use HCO_FluxArr_Mod,        only: HCO_FluxArrReset
-        use HCO_GeoTools_Mod,       only: HCO_CalcVertGrid, HCO_SetPBLm
+        use HCO_Interface_Common,      only: GetHcoVal, GetHcoDiagn
+        use HCO_Clock_Mod,             only: HcoClock_Set, HcoClock_Get
+        use HCO_Clock_Mod,             only: HcoClock_EmissionsDone
+        use HCO_Diagn_Mod,             only: HcoDiagn_AutoUpdate
+        use HCO_Driver_Mod,            only: HCO_Run
+        use HCO_EmisList_Mod,          only: Hco_GetPtr
+        use HCO_Calc_Mod,              only: Hco_EvalFld
+        use HCO_FluxArr_Mod,           only: HCO_FluxArrReset
+        use HCO_GeoTools_Mod,          only: HCO_CalcVertGrid, HCO_SetPBLm
 
-        use HCO_State_Mod,          only: HCO_GetHcoId
+        use HCO_State_Mod,             only: HCO_GetHcoId
 
         ! HEMCO Extensions
-        use HCOX_Driver_Mod,        only : HCOX_Run
+        use HCOX_Driver_Mod,           only: HCOX_Run
 
         ! Physical constants
-        use physconst,              only : mwdry
+        use physconst,                 only: mwdry
 
         ! Necessary imported properties for physics calculations
         use hco_cam_convert_state_mod, only: State_HCO_PSFC, State_HCO_TK, State_HCO_PBLH, State_CAM_chmDMS
@@ -1553,6 +1574,8 @@ contains
         ! Run HEMCO!
         !-----------------------------------------------------------------------
 
+        call t_startf('HCO_HCOX_Run')
+
         ! Run HCO core module
         ! Pass phase as argument. Phase 1 will update the emissions list,
         ! phase 2 will calculate the emissions. Emissions will be written into
@@ -1610,6 +1633,8 @@ contains
         ASSERT_(HMRC==HCO_SUCCESS)
 
         if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HCOX_Run"
+
+        call t_stopf('HCO_HCOX_Run')
 
         !-----------------------------------------------------------------------
         ! Update "autofill" diagnostics.
