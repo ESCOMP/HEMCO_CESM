@@ -2,6 +2,13 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.3.0] - 2024-04-29
+### Added
+- Performance timers using CIME infrastructure for initialization and run of major HEMCO_CESM and HEMCO components.
+
+### Changed
+- **Based off upstream HEMCO 3.8.1**. Refer to the HEMCO release notes.
+
 ## [1.2.2] - 2024-03-01
 ### Changed
 - **Based off upstream HEMCO 3.8.0**. Release 3.7.x was skipped due to regression in vertical regridding capabilities. Refer to the HEMCO release notes for changes in 3.8.0 release.
