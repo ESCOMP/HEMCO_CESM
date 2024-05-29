@@ -1,3 +1,6 @@
 [submodule "HEMCO"]
 	path = HEMCO
 	url = https://github.com/geoschem/hemco.git
+        fxtag = 3.6.3-cesm
+        fxDONOTMODIFYurl = https://github.com/geoschem/hemco.git
+        fxrequired = AlwaysRequired
