@@ -798,9 +798,13 @@ contains
         ! Check if we need to update
         if(cam_last_atm_id == atm_id) then
             if(masterproc) then
-                write(iulog,*) ">> UpdateRegrid received ", atm_id, " already set"
+                write(iulog,'(A,I2)') "HEMCO_CESM: UpdateRegrid is already in atmospheric grid #", atm_id
             endif
             return
+        else
+            if(masterproc) then
+                write(iulog,'(A,I2)') "HEMCO_CESM: UpdateRegrid now updating for atmospheric grid #", atm_id
+            endif
         endif
 
         cam_last_atm_id = atm_id
@@ -913,7 +917,7 @@ contains
         endif
 
         if(masterproc) then
-            write(iulog,*) ">> HEMCO: FieldRegridStore four-way ready"
+            write(iulog,*) "HEMCO_CESM: FieldRegridStore four-way complete", atm_id
         endif
 
         ! Finished updating regrid routines

@@ -1448,7 +1448,7 @@ contains
         if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
             ! The first timestep should not be skipped. A fix is made during initialization (hplin, 6/11/24)
             if(masterproc) then
-                write(iulog,*) "HEMCO_CESM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
+                write(iulog,*) "HEMCO_CESM: HEMCO already ran for this time, check timestep mgr (now day, s; last day, s)", now_day, now_s, last_HCO_day, last_HCO_second
             endif
 
             return
@@ -1475,11 +1475,10 @@ contains
         ! Update HEMCO clock
         ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us. oh well
-
-        !if(masterproc) then
-        !    write(6,*) "HEMCO_CESM: Updating HEMCO clock to set", year, month, day, hour, minute, second
-        !    write(6,*) "HEMCO_CESM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
-        !endif
+        if(masterproc) then
+            write(iulog,'(A,I4,A,I2,A,I2,A,I2,A,I2,A,I2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S)", year, "-", month, "-", day, " ", hour, ":", minute, ":", second
+            write(iulog,'(A,I4,A,I2,A,I2,A,I4)') "HEMCO_CESM: Internally HEMCO is at (Sim H:M:S:nStep)", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
+        endif
 
         call HCOClock_Set(HcoState, year, month, day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
