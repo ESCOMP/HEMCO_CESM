@@ -384,11 +384,10 @@ contains
         call get_curr_time(now_day, now_s)   ! 0 0
         call get_curr_date(year, month, day, tod) ! 2005 1 1 0
 
-        ! In order to allow first timestep to be ran, now use prev time from ESMF
-        ! which is time at beginning of timestep, as initialization time.
-        ! This should also improve the situation for restarts.
-        last_HCO_day    = prev_day
-        last_HCO_second = prev_s
+        ! In order to allow first timestep to be ran, set last HEMCO day and hour to
+        ! negative at initialization. prev_time from ESMF is always zero.
+        last_HCO_day    = -1
+        last_HCO_second = -1
         write(iulog,*) "HEMCO debug: prev_day, prev_s, now_day, now_s, y, m, d, tod", prev_day, prev_s, now_day, now_s, year, month, day, tod
 
         !-----------------------------------------------------------------------
