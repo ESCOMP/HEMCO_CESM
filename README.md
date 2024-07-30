@@ -13,7 +13,7 @@ This is the official repository for the **HEMCO-CESM** interface, coupling the [
 :envelope: Maintainer: [Haipeng Lin](https://github.com/jimmielin) (hplin@seas.harvard.edu). Please post an issue or pull request in this repository if your request is code-related.
 
 ## How to checkout
-HEMCO is fully implemented as an emissions component for [GEOS-Chem](https://gmd.copernicus.org/articles/15/8669/2022/) and [CAM-chem](https://wiki.ucar.edu/display/camchem/HEMCO) chemistry within CAM for [MUSICA](https://wiki.ucar.edu/display/MUSICA/MUSICA+Home). Simply download the latest release of CESM (2.3 and above) with CAM (6.3.118 and above) to use.
+HEMCO is fully implemented as an emissions component for [GEOS-Chem](https://gmd.copernicus.org/articles/15/8669/2022/) and [CAM-chem](https://wiki.ucar.edu/display/camchem/HEMCO) chemistry within CAM for [MUSICA](https://wiki.ucar.edu/display/MUSICA/MUSICA+Home).
 
 This repository, `HEMCO_CESM`, is included as an external in CAM (`src/hemco`) and contains the interface for HEMCO to communicate with CAM. This repository then includes HEMCO itself as an external (`src/hemco/HEMCO`) which is model independent and shared by all models implementing HEMCO (GEOS-Chem, GEOS, CESM, WRF, etc.)
 
