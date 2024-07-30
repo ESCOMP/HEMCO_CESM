@@ -2,6 +2,16 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [1.4.0] - TBD
+### Added
+- Added git submodule capability with HEMCO as the only submodule
+
+### Changed
+- Updated HEMCO submodule from version 3.8.1 to 3.9.0
+
+### Removed
+- Removed support for manage_externals
+
 ## [1.3.0] - 2024-04-29
 ### Added
 - Performance timers using CIME infrastructure for initialization and run of major HEMCO_CESM and HEMCO components.
