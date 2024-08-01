@@ -4,13 +4,15 @@ This file documents all notable changes to the HEMCO-CESM interface since late 2
 
 ## [1.4.0] - TBD
 ### Added
-- Added git submodule capability with HEMCO as the only submodule
+- Added git submodule capability with HEMCO as the only submodule.
 
 ### Changed
-- Updated HEMCO submodule from version 3.8.1 to 3.9.0
+- **Based off upstream HEMCO 3.9.0**. Updated HEMCO submodule from version 3.8.1 to 3.9.0. Refer to HEMCO release notes.
+- First timestep now runs HEMCO as there is no longer issue with timestep measurement from prior versions.
 
 ### Removed
-- Removed support for manage_externals
+- Removed support for manage_externals.
+- Removed obsolete timestep measurement as timestep information is already obtained from time_manager reliably.
 
 ## [1.3.0] - 2024-04-29
 ### Added

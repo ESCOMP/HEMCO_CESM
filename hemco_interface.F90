@@ -365,7 +365,7 @@ contains
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
             write(iulog,*) "HEMCO: Harmonized Emissions Component"
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
-            write(iulog,*) "HEMCO_CESM interface version 1.3.0"
+            write(iulog,*) "HEMCO_CESM interface version 2.0.0"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
             write(iulog,*) "ROOT: ", HcoRoot
             write(iulog,*) "Config File: ", HcoConfigFile
@@ -384,8 +384,11 @@ contains
         call get_curr_time(now_day, now_s)   ! 0 0
         call get_curr_date(year, month, day, tod) ! 2005 1 1 0
 
-        last_HCO_day    = now_day
-        last_HCO_second = now_s   ! This means first timestep is not ran
+        ! In order to allow first timestep to be ran, set last HEMCO day and hour to
+        ! negative at initialization. prev_time from ESMF is always zero.
+        last_HCO_day    = -1
+        last_HCO_second = -1
+        write(iulog,*) "HEMCO debug: prev_day, prev_s, now_day, now_s, y, m, d, tod", prev_day, prev_s, now_day, now_s, year, month, day, tod
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -1442,27 +1445,16 @@ contains
 
         ! Check if we have run HEMCO for this time step already. If yes can exit
         if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
-            ! But also do not skip the first time step
-            ! FIXME: Implicit assumption of time stepping size being 1800.0
-            ! FIXME hplin 2/28/21
-
+            ! The first timestep should not be skipped. A fix is made during initialization (hplin, 6/11/24)
             if(masterproc) then
-                write(iulog,*) "HEMCO_CESM: !! HEMCO already ran for this time, check timestep mgr", now_day, now_s, last_HCO_day, last_HCO_second
+                write(iulog,*) "HEMCO_CESM: HEMCO already ran for this time, check timestep mgr (now day, s; last day, s)", now_day, now_s, last_HCO_day, last_HCO_second
             endif
 
             return
         endif
 
-        ! Compute timestep
-        if(HcoState%TS_CHEM .ne. ((now_day - prev_day) * 86400.0 + now_s - prev_s)) then
-            HcoState%TS_EMIS = (now_day - prev_day) * 86400.0 + now_s - prev_s
-            HcoState%TS_CHEM = (now_day - prev_day) * 86400.0 + now_s - prev_s
-            HcoState%TS_DYN  = (now_day - prev_day) * 86400.0 + now_s - prev_s
-
-            if(masterproc) then
-                write(iulog,*) "HEMCO_CESM: Updated HEMCO timestep to ", HcoState%TS_CHEM
-            endif
-        endif
+        ! Timestep no longer needs to be updated by diff calculation because it can be
+        ! reliably retrieved from time_manager stepsize. (hplin, 6/11/24)
 
         ! Compute hour, minute, second (borrowed from tfritz)
         tmp_currTOD = tod
@@ -1482,11 +1474,10 @@ contains
         ! Update HEMCO clock
         ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us. oh well
-
-        !if(masterproc) then
-        !    write(6,*) "HEMCO_CESM: Updating HEMCO clock to set", year, month, day, hour, minute, second
-        !    write(6,*) "HEMCO_CESM: Internally HEMCO is at ", HcoState%Clock%SimHour, HcoState%Clock%SimMin, HcoState%Clock%SimSec, HcoState%Clock%nSteps
-        !endif
+        if(masterproc) then
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') "HEMCO_CESM: Internally HEMCO was at (Sim H:M:S:nStep) ", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", year, "-", month, "-", day, " ", hour, ":", minute, ":", second
+        endif
 
         call HCOClock_Set(HcoState, year, month, day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
