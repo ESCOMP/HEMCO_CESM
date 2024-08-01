@@ -1475,8 +1475,8 @@ contains
         ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us. oh well
         if(masterproc) then
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') "HEMCO_CESM: Internally HEMCO was at (Sim H:M:S:nStep) ", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
             write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", year, "-", month, "-", day, " ", hour, ":", minute, ":", second
-            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') "HEMCO_CESM: Internally HEMCO is at (Sim H:M:S:nStep) ", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
         endif
 
         call HCOClock_Set(HcoState, year, month, day,  &
