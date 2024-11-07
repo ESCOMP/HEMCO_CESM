@@ -388,7 +388,7 @@ contains
         ! negative at initialization. prev_time from ESMF is always zero.
         last_HCO_day    = -1
         last_HCO_second = -1
-        write(iulog,*) "HEMCO debug: prev_day, prev_s, now_day, now_s, y, m, d, tod", prev_day, prev_s, now_day, now_s, year, month, day, tod
+!        write(iulog,*) "HEMCO debug: prev_day, prev_s, now_day, now_s, y, m, d, tod", prev_day, prev_s, now_day, now_s, year, month, day, tod
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -1574,7 +1574,7 @@ contains
         !
         ! FIXME: hplin - setting false as last timestep of simulation. maybe see
         ! if we can figure out from CAM if we are at run end and set to true
-        call HCO_Run( HcoState, 1, HMRC, IsEndStep=.false. )
+        call HCO_Run( HcoConfig%amIRoot, HcoState, 1, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
             write(iulog,*) "HEMCO_CESM: HCO_Run Phase 1 has failed!    "
@@ -1590,7 +1590,7 @@ contains
 
         if(masterproc .and. nCalls < 10) write(iulog,*) "HEMCO_CESM: HCO_Run Phase 1"
 
-        call HCO_Run( HcoState, 2, HMRC, IsEndStep=.false. )
+        call HCO_Run( HcoConfig%amIRoot, HcoState, 2, HMRC, IsEndStep=.false. )
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
             write(iulog,*) "******************************************"
             write(iulog,*) "HEMCO_CESM: HCO_Run Phase 2 has failed!    "
