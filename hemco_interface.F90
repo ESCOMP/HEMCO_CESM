@@ -1578,9 +1578,8 @@ contains
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
-            write(iulog,*) "Please refer to the HEMCO.log log file in your"
-            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in your"
+            write(iulog,*) "case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -1594,9 +1593,8 @@ contains
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!       "
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
-            write(iulog,*) "Please refer to the HEMCO.log log file in your"
-            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in your"
+            write(iulog,*) "case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -1613,9 +1611,8 @@ contains
             write(iulog,*) "THIS ERROR ORIGINATED WITHIN HEMCO!"
             write(iulog,*) "A critical component in HEMCO failed to run."
             write(iulog,*) "This may be due to misconfiguration, or a bug."
-            write(iulog,*) "Please refer to the HEMCO.log log file in your"
-            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in your"
+            write(iulog,*) "case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
