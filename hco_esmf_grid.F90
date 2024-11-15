@@ -434,9 +434,9 @@ contains
 
             write( iulog, '(a)'   ) REPEAT( '=', 79 )
             write( iulog, '(a,/)' ) 'V E R T I C A L   G R I D   S E T U P'
-            write( iulog, '( ''Ap '', /, 6(f11.6,1x) )' ) AP(1:LM+1)
+            write( iulog, '( ''Ap '', /, 6(f14.6,1x) )' ) AP(1:LM+1)
             write( iulog, '(a)'   )
-            write( iulog, '( ''Bp '', /, 6(f11.6,1x) )' ) BP(1:LM+1)
+            write( iulog, '( ''Bp '', /, 6(f14.6,1x) )' ) BP(1:LM+1)
             write( iulog, '(a)'   ) REPEAT( '=', 79 )
         endif
 
