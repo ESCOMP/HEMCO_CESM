@@ -690,11 +690,12 @@ contains
 
         if(masterproc) then
             ! Output information on the decomposition
-            write(iulog,*) ">> HEMCO DEBUG - Committed HCO_Tasks decomposition"
-            write(iulog,*) "nPET, nPET_lon, nPET_lat", nPET, nPET_lon, nPET_lat
+            write(iulog,*) "Committed HCO_Tasks decomposition:"
+            write(iulog,*) "nPET = ", nPET, ", nPET_lon = ", nPET_lon, ", nPET_lat = ",  nPET_lat
             do N = 0, nPET-1
-                write(iulog,*) "PET", N, " ID", HCO_Tasks(N)%ID, " ID_I", HCO_Tasks(N)%ID_I, " ID_J", HCO_Tasks(N)%ID_J, &
-                               "IM (IS,IE)", HCO_Tasks(N)%IM, HCO_Tasks(N)%IS, HCO_Tasks(N)%IE, " // JM (JS, JE)", HCO_Tasks(N)%JM, HCO_Tasks(N)%JS, HCO_Tasks(N)%JE
+                ! more info to print if needed
+                !write(iulog,*) "PET", N, " ID", HCO_Tasks(N)%ID, " ID_I", HCO_Tasks(N)%ID_I, " ID_J", HCO_Tasks(N)%ID_J, &
+                !               "IM (IS,IE)", HCO_Tasks(N)%IM, HCO_Tasks(N)%IS, HCO_Tasks(N)%IE, " // JM (JS, JE)", HCO_Tasks(N)%JM, HCO_Tasks(N)%JS, HCO_Tasks(N)%JE
             enddo
         endif
 
