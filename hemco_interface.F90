@@ -367,9 +367,9 @@ contains
             write(iulog,*) "https://doi.org/10.5194/gmd-14-5487-2021 (Lin et al., 2021)"
             write(iulog,*) "HEMCO_CESM interface version 2.0.0"
             write(iulog,*) "You are using HEMCO version ", ADJUSTL(HCO_VERSION)
-            write(iulog,*) "ROOT: ", HcoRoot
-            write(iulog,*) "Config File: ", HcoConfigFile
-            write(iulog,*) "Diagn File: ", HcoDiagnFile
+            write(iulog,*) "ROOT: ", TRIM(HcoRoot)
+            write(iulog,*) "Config File: ", TRIM(HcoConfigFile)
+            write(iulog,*) "Diagn File: ", (HcoDiagnFile)
             write(iulog,*) "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
         endif
 
@@ -598,14 +598,13 @@ contains
             write(iulog,*) "This may be due to misconfiguration of the"
             write(iulog,*) "hemco_config_file namelist variable, or a"
             write(iulog,*) "misformatted HEMCO configuration file."
-            write(iulog,*) "Please refer to the HEMCO.log log file in your"
-            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in your"
+            write(iulog,*) "case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
 
-        ! Open the log file
+        ! Open the HEMCO log file (if using)
         if(masterproc) then
             call HCO_LOGFILE_OPEN(HcoConfig%Err, RC=HMRC)
             ASSERT_(HMRC==HCO_SUCCESS)
@@ -620,9 +619,8 @@ contains
             write(iulog,*) "This may be due to misconfiguration of the"
             write(iulog,*) "hemco_config_file namelist variable, or a"
             write(iulog,*) "misformatted HEMCO configuration file."
-            write(iulog,*) "Please refer to the HEMCO.log log file in your"
-            write(iulog,*) "case run directory or as configured in HEMCO_Config.rc"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in your"
+            write(iulog,*) "case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
@@ -852,9 +850,8 @@ contains
             write(iulog,*) "HEMCO could not be initialized."
             write(iulog,*) "This may be due to misconfiguration of the"
             write(iulog,*) "HEMCO configuration file."
-            write(iulog,*) "Please refer to the HEMCO.log log file and"
-            write(iulog,*) "the cesm.log. log files in your case run directory"
-            write(iulog,*) "for more information."
+            write(iulog,*) "Please refer to the cesm.log log file in"
+            write(iulog,*) "your case run directory for more information."
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
