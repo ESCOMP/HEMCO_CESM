@@ -149,10 +149,6 @@ module hemco_interface
     ! HEMCO configuration parameters that are set by namelist in CESM
     integer                          :: HcoFixYY            ! if > 0, force 'Emission year'
 
-    ! Last execution times for the HEMCO component. We are assuming that time
-    ! flows unidirectionally (and forwards, for now). (hplin, 3/30/20)
-    integer                          :: last_HCO_day, last_HCO_second
-
     ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
     ! We have to store the fields because the regridding can only take place within the GridComp.
     ! Fields are allocated after the internal grid is initialized (so my_* are avail)
@@ -381,10 +377,6 @@ contains
         ! Get time properties
         !-----------------------------------------------------------------------
 
-        ! In order to allow first timestep to be ran, set last HEMCO day and hour to
-        ! negative at initialization. prev_time from ESMF is always zero.
-        last_HCO_day    = -1
-        last_HCO_second = -1
         ! Optional prints to understand CAM time
         !if(masterproc) then
         !   call get_prev_time(ts0_day, ts0_s)
@@ -1439,14 +1431,19 @@ contains
         call get_curr_time(ts1_day, ts1_s)
         call get_curr_date(ts1_year, ts1_month, ts1_day, ts1_tod)
 
-        ! Check if we have run HEMCO for this time step already. If yes can exit
-        if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
-            ! The first timestep should not be skipped. A fix is made during initialization (hplin, 6/11/24)
-            if(masterproc) then
-                write(iulog,*) "HEMCO_CESM: HEMCO already ran for this time, check timestep mgr (now day, s; last day, s)", now_day, now_s, last_HCO_day, last_HCO_second
-            endif
+        ! Optional debug prints to display CAM times
+        !if(masterproc) then
+        !   write(iulog,*) "HEMCO_CESM debug: CAM date at start of timestep: year, month, day, tod: ", ts0_year, ts0_month, ts0_day, ts0_tod
+        !   write(iulog,*) "HEMCO_CESM debug: CAM date at end of timestep: year, month, day, tod: ", ts1_year, ts1_month, ts1_day, ts1_tod
+        !   write(iulog,*) "HEMCO_CESM debug: CAM time at start of timestep: day, s: ", ts0_day, ts0_s
+        !   write(iulog,*) "HEMCO_CESM debug: CAM time at end of timestep: day, s: ", ts1_day, ts1_s
+        !endif
 
-            return
+        ! Check if we have run HEMCO for this time step already based on CAM time
+        ! which is time at end of timestep
+        if ( ( ts0_day == ts1_day ) .and. ( ts0_s == ts1_s ) ) then
+           if(masterproc) write(iulog,*) "HEMCO_CESM: CAM current and previous times are the same. Do not run HEMCO yet."
+           return
         endif
 
         ! Timestep no longer needs to be updated by diff calculation because it can be
@@ -2442,9 +2439,6 @@ contains
         !-----------------------------------------------------------------------
         ! Finished!
         !-----------------------------------------------------------------------
-        ! Update last execution time
-        last_HCO_day    = now_day
-        last_HCO_second = now_s
 
         IF ( FIRST ) FIRST = .False.
 
