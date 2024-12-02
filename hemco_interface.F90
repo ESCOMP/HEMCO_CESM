@@ -59,7 +59,8 @@ module hemco_interface
     use ppgrid,                   only: begchunk, endchunk ! Chunk idxs
 
     ! Time
-    use time_manager,             only: get_curr_time, get_prev_time, get_curr_date
+    use time_manager,             only: get_prev_time, get_prev_date
+    use time_manager,             only: get_curr_time, get_curr_date
     use time_manager,             only: get_step_size
 
     ! ESMF types
@@ -344,9 +345,8 @@ contains
         character(len=128)           :: exportNameTmp
 
         ! Timing properties
-        integer                      :: year, month, day, tod
-        integer                      :: hour, minute, second, dt
-        integer                      :: prev_day, prev_s, now_day, now_s
+        integer                      :: ts0_year, ts0_month, ts0_day, ts0_tod, ts0_s ! timestep start
+        integer                      :: ts1_year, ts1_month, ts1_day, ts1_tod, ts1_s ! timestep end
         integer                      :: stepsize_tmp
 
         ! Temporaries
@@ -380,15 +380,22 @@ contains
         !-----------------------------------------------------------------------
         ! Get time properties
         !-----------------------------------------------------------------------
-        call get_prev_time(prev_day, prev_s) ! 0 0
-        call get_curr_time(now_day, now_s)   ! 0 0
-        call get_curr_date(year, month, day, tod) ! 2005 1 1 0
 
         ! In order to allow first timestep to be ran, set last HEMCO day and hour to
         ! negative at initialization. prev_time from ESMF is always zero.
         last_HCO_day    = -1
         last_HCO_second = -1
-!        write(iulog,*) "HEMCO debug: prev_day, prev_s, now_day, now_s, y, m, d, tod", prev_day, prev_s, now_day, now_s, year, month, day, tod
+        ! Optional prints to understand CAM time
+        !if(masterproc) then
+        !   call get_prev_time(ts0_day, ts0_s)
+        !   call get_prev_date(ts0_year, ts0_month, ts0_day, ts0_tod)
+        !   call get_curr_time(ts1_day, ts1_s)
+        !   call get_curr_date(ts1_year, ts1_month, ts1_day, ts1_tod)
+        !   write(iulog,*) "HEMCO_CESM debug (init): CAM date at start of timestep: year, month, day, tod: ", ts0_year, ts0_month, ts0_day, ts0_tod
+        !   write(iulog,*) "HEMCO_CESM debug (init): CAM date at end of timestep: year, month, day, tod: ", ts1_year, ts1_month, ts1_day, ts1_tod
+        !   write(iulog,*) "HEMCO_CESM debug (init): CAM time at start of timestep: day, s: ", ts0_day, ts0_s
+        !   write(iulog,*) "HEMCO_CESM debug (init): CAM time at end of timestep: day, s: n", ts1_day, ts1_s
+        !endif
 
         !-----------------------------------------------------------------------
         ! Setup ESMF wrapper gridded component
@@ -1370,10 +1377,10 @@ contains
         real(ESMF_KIND_R8)                    :: dummy_2(my_IS:my_IE, my_JS:my_JE)
 
         ! Timing properties
-        integer                               :: year, month, day, tod
+        integer                               :: ts0_year, ts0_month, ts0_day, ts0_tod, ts0_s
+        integer                               :: ts1_year, ts1_month, ts1_day, ts1_tod, ts1_s
         integer                               :: hour, minute, second
-        integer                               :: prev_day, prev_s, now_day, now_s
-        integer                               :: tmp_currTOD
+        integer                               :: tmp_ts0_TOD
 
         ! HEMCO vertical grid property pointers
         ! NOTE: Hco_CalcVertGrid expects pointer-based arguments, so we must
@@ -1424,21 +1431,13 @@ contains
         endif
 
         !-----------------------------------------------------------------------
-        ! Get time properties
+        ! Get time properties. Current time is time at end of current timestep.
+        ! Previous time is time at start of current timestep.
         !-----------------------------------------------------------------------
-        call get_prev_time(prev_day, prev_s)
-        call get_curr_time(now_day, now_s)
-        call get_curr_date(year, month, day, tod)
-
-        !if(masterproc) then
-        !    write(iulog,*) "hco year,month,day,tod", year, month, day, tod
-        !    write(iulog,*) "hco prev_day, prev_s", prev_day, prev_s
-        !    write(iulog,*) "hco now_day, now_s", now_day, now_s
-        !endif
-        ! 2005 1 1 1800 | 0 0 | 0 1800
-        ! 2005 1 1 3600 | 0 1800 | 0 3600
-        ! 2005 1 1 5400 | 0 3600 | 0 5400
-        ! ...
+        call get_prev_time(ts0_day, ts0_s)
+        call get_prev_date(ts0_year, ts0_month, ts0_day, ts0_tod)
+        call get_curr_time(ts1_day, ts1_s)
+        call get_curr_date(ts1_year, ts1_month, ts1_day, ts1_tod)
 
         ! Check if we have run HEMCO for this time step already. If yes can exit
         if(last_HCO_day * 86400.0 + last_HCO_second .ge. now_day * 86400.0 + now_s) then
@@ -1453,30 +1452,30 @@ contains
         ! Timestep no longer needs to be updated by diff calculation because it can be
         ! reliably retrieved from time_manager stepsize. (hplin, 6/11/24)
 
-        ! Compute hour, minute, second (borrowed from tfritz)
-        tmp_currTOD = tod
+        ! Compute previous hour, minute, second which is time at timestep start
+        tmp_ts0_TOD = ts0_tod
         hour = 0
         minute = 0
-        do while(tmp_currTOD >= 3600)
-            tmp_currTOD = tmp_currTOD - 3600
+        do while(tmp_ts0_TOD >= 3600)
+            tmp_ts0_TOD = tmp_ts0_TOD - 3600
             hour = hour + 1
         enddo
 
-        do while(tmp_currTOD >= 60)
-            tmp_currTOD = tmp_currTOD - 60
+        do while(tmp_ts0_TOD >= 60)
+            tmp_ts0_TOD = tmp_ts0_TOD - 60
             minute = minute + 1
         enddo
-        second = tmp_currTOD
+        second = tmp_ts0_TOD
 
-        ! Update HEMCO clock
-        ! using HcoClock_Set and not common SetHcoTime because we don't have DOY
-        ! and we want HEMCO to do the math for us. oh well
+        ! Update HEMCO clock to time at start of timestep which is CAM previous time.
+        ! Use HcoClock_Set and not common SetHcoTime because we don't have DOY
+        ! and we want HEMCO to do the math for us.
         if(masterproc) then
             write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') "HEMCO_CESM: Internally HEMCO was at (Sim H:M:S:nStep) ", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
-            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", year, "-", month, "-", day, " ", hour, ":", minute, ":", second
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", ts0_year, "-", ts0_month, "-", ts0_day, " ", hour, ":", minute, ":", second
         endif
 
-        call HCOClock_Set(HcoState, year, month, day,  &
+        call HCOClock_Set(HcoState, ts0_year, ts0_month, ts0_day,  &
                           hour, minute, second, IsEmisTime=.true., RC=HMRC)
         ASSERT_(HMRC==HCO_SUCCESS)
 
