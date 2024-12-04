@@ -516,7 +516,7 @@ contains
         ! We are using pcnst here, which is # of constituents.
         nHcoSpc             = pcnst          ! # of hco species?
 
-        call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc)
+        call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc, outLUN=iulog)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         HcoConfig%amIRoot   = masterproc
