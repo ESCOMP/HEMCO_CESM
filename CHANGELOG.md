@@ -2,7 +2,7 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
-## [2.2] - TBD
+## [2.0.1] - TBD
 ### Changed
 - Added new default configuration file for HEMCO which reads/regrids 3D emissions hourly
 - Updated debug printout and message for where to find error messages
@@ -12,25 +12,20 @@ This file documents all notable changes to the HEMCO-CESM interface since late 2
 - Fixed formatting for Ap/Bp printout
 - Fixed condition for first timestep to ensure HEMCO is not run at timestep 0
 
-## [2.1] - 2024-07-31
-### Changed
-- Update README
-- Run HEMCO starting in first step
-- Updates to debug printout
-
-### Removed
-- Removed support for manage_externals.
-- Removed obsolete timestep measurement as timestep information is already obtained from time_manager reliably.
-
-## [1.4.0] - 2024-07-30
+## [2.0.0] - 2024-07-31
 ### Added
 - Added git submodule capability with HEMCO as the only submodule.
 
 ### Changed
+- Update README
+- Run HEMCO starting in first step
+- Updates to debug printout
 - **Based off upstream HEMCO 3.9.0**. Updated HEMCO submodule from version 3.8.1 to 3.9.0. Refer to HEMCO release notes.
 - First timestep now runs HEMCO as there is no longer issue with timestep measurement from prior versions.
 
 ### Removed
+- Removed support for manage_externals.
+- Removed obsolete timestep measurement as timestep information is already obtained from time_manager reliably.
 - Removed support for manage_externals.
 - Removed obsolete timestep measurement as timestep information is already obtained from time_manager reliably.
 
