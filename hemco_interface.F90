@@ -1388,6 +1388,7 @@ contains
         integer                      :: HMRC
 
         logical, save                :: FIRST = .True.
+        logical, save                :: isTimestepping = .False.
         logical                      :: doExport = .False.
         integer, save                :: nCalls = 0
 
@@ -1422,30 +1423,29 @@ contains
 
         !-----------------------------------------------------------------------
         ! Get time properties. Current time is time at end of current timestep.
-        ! Previous time is time at start of current timestep.
+        ! Previous time is time at start of current timestep. Use these
+        ! to do checks and set HEMCO clock.
         !-----------------------------------------------------------------------
         call get_prev_time(ts0_day, ts0_s)
         call get_prev_date(ts0_year, ts0_month, ts0_day, ts0_tod)
-        call get_curr_time(ts1_day, ts1_s)
-        call get_curr_date(ts1_year, ts1_month, ts1_day, ts1_tod)
 
-        ! Optional debug prints to display CAM times
-        !if(masterproc) then
-        !   write(iulog,*) "HEMCO_CESM debug: CAM date at start of timestep: year, month, day, tod: ", ts0_year, ts0_month, ts0_day, ts0_tod
-        !   write(iulog,*) "HEMCO_CESM debug: CAM date at end of timestep: year, month, day, tod: ", ts1_year, ts1_month, ts1_day, ts1_tod
-        !   write(iulog,*) "HEMCO_CESM debug: CAM time at start of timestep: day, s: ", ts0_day, ts0_s
-        !   write(iulog,*) "HEMCO_CESM debug: CAM time at end of timestep: day, s: ", ts1_day, ts1_s
-        !endif
-
-        ! Check if we have run HEMCO for this time step already based on CAM time
-        ! which is time at end of timestep
-        if ( ( ts0_day == ts1_day ) .and. ( ts0_s == ts1_s ) ) then
-           if(masterproc) write(iulog,*) "HEMCO_CESM: CAM current and previous times are the same. Do not run HEMCO yet."
-           return
+        ! Check if timestepping has begun by comparing current (end of timestep) and previous (start of timestep) times
+        if ( .not. isTimestepping ) then
+           call get_curr_time(ts1_day, ts1_s)
+           call get_curr_date(ts1_year, ts1_month, ts1_day, ts1_tod)
+           !if(masterproc) then
+           !   write(iulog,*) "HEMCO_CESM debug: CAM date at start of timestep: year, month, day, tod: ", ts0_year, ts0_month, ts0_day, ts0_tod
+           !   write(iulog,*) "HEMCO_CESM debug: CAM date at end of timestep: year, month, day, tod: ", ts1_year, ts1_month, ts1_day, ts1_tod
+           !   write(iulog,*) "HEMCO_CESM debug: CAM time at start of timestep: day, s: ", ts0_day, ts0_s
+           !   write(iulog,*) "HEMCO_CESM debug: CAM time at end of timestep: day, s: ", ts1_day, ts1_s
+           !endif
+           if ( ( ts0_day == ts1_day ) .and. ( ts0_s == ts1_s ) ) then
+              if(masterproc) write(iulog,*) "HEMCO_CESM: CAM current and previous times are the same. Do not run HEMCO yet."
+              return
+           else
+              isTimestepping = .True.
+           endif
         endif
-
-        ! Timestep no longer needs to be updated by diff calculation because it can be
-        ! reliably retrieved from time_manager stepsize. (hplin, 6/11/24)
 
         ! Compute previous hour, minute, second which is time at timestep start
         tmp_ts0_TOD = ts0_tod
