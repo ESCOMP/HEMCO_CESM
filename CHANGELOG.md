@@ -3,6 +3,9 @@
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
 ## [2.0.1] - TBD
+### Added
+- Added fleximod capability to .gitmodules
+
 ### Changed
 - Added new default configuration file for HEMCO which reads/regrids 3D emissions hourly
 - Updated debug printout and message for where to find error messages
