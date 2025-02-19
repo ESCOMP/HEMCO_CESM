@@ -516,7 +516,7 @@ contains
         ! We are using pcnst here, which is # of constituents.
         nHcoSpc             = pcnst          ! # of hco species?
 
-        call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc, outLUN=iulog)
+        call ConfigInit(HcoConfig, HMRC, nModelSpecies=nHcoSpc, stdLogLUN=iulog)
         ASSERT_(HMRC==HCO_SUCCESS)
 
         HcoConfig%amIRoot   = masterproc
@@ -600,12 +600,6 @@ contains
             write(iulog,*) "******************************************"
         endif
         ASSERT_(HMRC==HCO_SUCCESS)
-
-        ! Open the HEMCO log file (if using)
-        if(masterproc) then
-            call HCO_LOGFILE_OPEN(HcoConfig%Err, RC=HMRC)
-            ASSERT_(HMRC==HCO_SUCCESS)
-        endif
 
         call Config_ReadFile(HcoConfig%amIRoot, HcoConfig, HcoConfigFile, 2, HMRC, IsDryRun=.false.)
         if(masterproc .and. HMRC /= HCO_SUCCESS) then
