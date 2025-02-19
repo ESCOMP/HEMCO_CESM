@@ -5,10 +5,12 @@ This file documents all notable changes to the HEMCO-CESM interface since late 2
 ## [2.0.1] - TBD
 ### Added
 - Added fleximod capability to .gitmodules
+- Added print target LUN for atm.log to arguments passed to HEMCO ConfigInit to direct HEMCO root prints to atm.log rathe rather than cesm.llog
 
 ### Changed
 - Added new default configuration file for HEMCO which reads/regrids 3D emissions hourly
 - Updated debug printout and message for where to find error messages
+- Updated HEMCO submodule from 3.9.0 to 3.10.1
 
 ### Fixed
 - Fixed HEMCO clock to be time at start of timestep rather than end
