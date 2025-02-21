@@ -2,5 +2,5 @@
 	path = HEMCO
 	url = https://github.com/geoschem/hemco.git
 	fxrequired = AlwaysRequired
-	fxtag = 3.9.0
+	fxtag = 3.10.1
 	fxDONOTUSEurl = https://github.com/geoschem/hemco.git
