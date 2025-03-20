@@ -860,7 +860,7 @@ contains
             poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
             extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
             routeHandle=CAM2HCO_RouteHandle_2D,                    &
-            !srcTermProcessing=smm_srctermproc,                     &
+            srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
@@ -877,7 +877,7 @@ contains
             poleMethod=ESMF_POLEMETHOD_ALLAVG,                     &
             extrapMethod=ESMF_EXTRAPMETHOD_NEAREST_IDAVG,          &
             routeHandle=CAM2HCO_RouteHandle_3D,                    &
-            !srcTermProcessing=smm_srctermproc,                     &
+            srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
@@ -892,7 +892,7 @@ contains
             regridMethod=ESMF_REGRIDMETHOD_CONSERVE    ,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_2D,                    &
-            !srcTermProcessing=smm_srctermproc,                     &
+            srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
@@ -909,7 +909,7 @@ contains
             regridMethod=ESMF_REGRIDMETHOD_CONSERVE    ,           &
             poleMethod=ESMF_POLEMETHOD_NONE,                       &
             routeHandle=HCO2CAM_RouteHandle_3D,                    &
-            !srcTermProcessing=smm_srctermproc,                     &
+            srcTermProcessing=smm_srctermproc,                     &
             pipelineDepth=smm_pipelinedep, rc=RC)
         ASSERT_(RC==ESMF_SUCCESS)
 
