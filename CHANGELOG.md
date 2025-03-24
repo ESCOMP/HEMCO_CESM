@@ -2,7 +2,11 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
-## [2.0.1] - TBD
+## [2.1.1] - TBD
+### Fixed
+ - Enable b4b reproducibility in all CAM <-> HCO regridding by passing srcTermProcessing=1 to ESMF_RegridFieldStore
+
+## [2.1.0] - 2024-12-16
 ### Added
 - Added fleximod capability to .gitmodules
 - Added print target LUN for atm.log to arguments passed to HEMCO ConfigInit to direct HEMCO root prints to atm.log rathe rather than cesm.log
