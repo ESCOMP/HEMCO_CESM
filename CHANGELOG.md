@@ -2,9 +2,13 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
-## [2.1.1] - TBD
+## [2.2.0] - 2024-04-07
 ### Fixed
  - Enable b4b reproducibility in all CAM <-> HCO regridding by passing srcTermProcessing=1 to ESMF_RegridFieldStore
+
+### Changed
+- Updated HEMCO submodule from 3.9.0 to 3.10.3 (see HEMCO changelog for details)
+- Added iulog as argument to configure HEMCO so as to enable printing to CAM log (atm.log) rather than CESM log (cesm.log) for root
 
 ## [2.1.0] - 2024-12-16
 ### Added
@@ -14,7 +18,6 @@ This file documents all notable changes to the HEMCO-CESM interface since late 2
 ### Changed
 - Added new default configuration file for HEMCO which reads/regrids 3D emissions hourly
 - Updated debug printout and message for where to find error messages
-- Updated HEMCO submodule from 3.9.0 to 3.10.1
 
 ### Fixed
 - Fixed HEMCO clock to be time at start of timestep rather than end
