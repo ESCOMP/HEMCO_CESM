@@ -13,7 +13,7 @@ This is the official repository for the **HEMCO-CESM** interface, coupling the [
 :envelope: Maintainer: [Haipeng Lin](https://github.com/jimmielin) (hplin@seas.harvard.edu). Please post an issue or pull request in this repository if your request is code-related.
 
 ## How to checkout
-HEMCO is fully implemented as an emissions component for [GEOS-Chem](https://gmd.copernicus.org/articles/15/8669/2022/) and [CAM-chem](https://wiki.ucar.edu/display/camchem/HEMCO) chemistry within CAM for [MUSICA](https://wiki.ucar.edu/display/MUSICA/MUSICA+Home). Simply download the latest release of CESM (2.3 and above) with CAM (6.3.118 and above) to use.
+HEMCO is fully implemented as an emissions component for [GEOS-Chem](https://gmd.copernicus.org/articles/15/8669/2022/) and [CAM-chem](https://wiki.ucar.edu/display/camchem/HEMCO) chemistry within CAM for [MUSICA](https://wiki.ucar.edu/display/MUSICA/MUSICA+Home) starting with CESM 2.3 with CAM 6.3.118.
 
 This repository, `HEMCO_CESM`, is included as an external in CAM (`src/hemco`) and contains the interface for HEMCO to communicate with CAM. This repository then includes HEMCO itself as an external (`src/hemco/HEMCO`) which is model independent and shared by all models implementing HEMCO (GEOS-Chem, GEOS, CESM, WRF, etc.)
 
@@ -29,6 +29,16 @@ This repository, `HEMCO_CESM`, is included as an external in CAM (`src/hemco`) a
 
 ### Configuration files
 ...are available in the [HEMCO_CESM_configs](https://github.com/jimmielin/HEMCO_CESM_configs) repository with [instructions on how to translate GEOS-Chem emission species to CAM-chem](https://github.com/jimmielin/HEMCO_CESM_configs/blob/master/CAM-Chem/Mapping_Process.md).
+
+### Contribution Guide/Branches
+* `main` will always represent the latest code merged into `cam_development`.
+* `development` is the development trunk, where latest code and features are available but not yet available in `cam_development`. Releases are tagged from this branch.
+* `dev/*` are feature branches where development happens. The contents of these branches are submitted to `development` via pull requests.
+
+Releases are named in the format `hemco-cesmX_Y_Z_hemco3_9_0` where `X.Y.Z` is the semantic versioning of the HEMCO-CESM **interface** release (See `CHANGELOG.md`) and the suffix is the accompanying HEMCO version.
+* `X` represents breaking, backwards-incompatible changes.
+* `Y` represents backwards-compatible major releases.
+* `Z` represents backwards-compatible bug fixes, including minor releases with changes only in the HEMCO external.
 
 ## License
 ```
