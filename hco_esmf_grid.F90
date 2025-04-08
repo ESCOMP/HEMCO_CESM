@@ -434,9 +434,9 @@ contains
 
             write( iulog, '(a)'   ) REPEAT( '=', 79 )
             write( iulog, '(a,/)' ) 'V E R T I C A L   G R I D   S E T U P'
-            write( iulog, '( ''Ap '', /, 6(f11.6,1x) )' ) AP(1:LM+1)
+            write( iulog, '( ''Ap '', /, 6(f14.6,1x) )' ) AP(1:LM+1)
             write( iulog, '(a)'   )
-            write( iulog, '( ''Bp '', /, 6(f11.6,1x) )' ) BP(1:LM+1)
+            write( iulog, '( ''Bp '', /, 6(f14.6,1x) )' ) BP(1:LM+1)
             write( iulog, '(a)'   ) REPEAT( '=', 79 )
         endif
 
@@ -690,11 +690,12 @@ contains
 
         if(masterproc) then
             ! Output information on the decomposition
-            write(iulog,*) ">> HEMCO DEBUG - Committed HCO_Tasks decomposition"
-            write(iulog,*) "nPET, nPET_lon, nPET_lat", nPET, nPET_lon, nPET_lat
+            write(iulog,*) "Committed HCO_Tasks decomposition:"
+            write(iulog,*) "nPET = ", nPET, ", nPET_lon = ", nPET_lon, ", nPET_lat = ",  nPET_lat
             do N = 0, nPET-1
-                write(iulog,*) "PET", N, " ID", HCO_Tasks(N)%ID, " ID_I", HCO_Tasks(N)%ID_I, " ID_J", HCO_Tasks(N)%ID_J, &
-                               "IM (IS,IE)", HCO_Tasks(N)%IM, HCO_Tasks(N)%IS, HCO_Tasks(N)%IE, " // JM (JS, JE)", HCO_Tasks(N)%JM, HCO_Tasks(N)%JS, HCO_Tasks(N)%JE
+                ! more info to print if needed
+                !write(iulog,*) "PET", N, " ID", HCO_Tasks(N)%ID, " ID_I", HCO_Tasks(N)%ID_I, " ID_J", HCO_Tasks(N)%ID_J, &
+                !               "IM (IS,IE)", HCO_Tasks(N)%IM, HCO_Tasks(N)%IS, HCO_Tasks(N)%IE, " // JM (JS, JE)", HCO_Tasks(N)%JM, HCO_Tasks(N)%JS, HCO_Tasks(N)%JE
             enddo
         endif
 
@@ -798,9 +799,13 @@ contains
         ! Check if we need to update
         if(cam_last_atm_id == atm_id) then
             if(masterproc) then
-                write(iulog,*) ">> UpdateRegrid received ", atm_id, " already set"
+                write(iulog,'(A,I2)') "HEMCO_CESM: UpdateRegrid is already in atmospheric grid #", atm_id
             endif
             return
+        else
+            if(masterproc) then
+                write(iulog,'(A,I2)') "HEMCO_CESM: UpdateRegrid now updating for atmospheric grid #", atm_id
+            endif
         endif
 
         cam_last_atm_id = atm_id
@@ -913,7 +918,7 @@ contains
         endif
 
         if(masterproc) then
-            write(iulog,*) ">> HEMCO: FieldRegridStore four-way ready"
+            write(iulog,*) "HEMCO_CESM: FieldRegridStore four-way complete", atm_id
         endif
 
         ! Finished updating regrid routines
