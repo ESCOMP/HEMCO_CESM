@@ -9,8 +9,8 @@
 !
 ! !DESCRIPTION: Module HEMCO\_INTERFACE is the HEMCO-CESM interface module.
 !               CESM operates on chunks thus the interface is called HCOI\_Chunk.
-!               Internally it uses a gridded component to interact with the CAM
-!               physics grid; these functions are internal and called HCO\_GC...
+!               The core HEMCO run logic is in HCO\_GC\_Run which is called directly
+!               from HCOI\_Chunk\_Run.
 !\\
 !\\
 ! !INTERFACE:
@@ -64,8 +64,7 @@ module hemco_interface
     use time_manager,             only: get_step_size
 
     ! ESMF types
-    use ESMF,                     only: ESMF_State, ESMF_Clock, ESMF_GridComp
-    use ESMF,                     only: ESMF_KIND_R8, ESMF_KIND_I4, ESMF_SUCCESS
+    use ESMF,                     only: ESMF_KIND_R8, ESMF_SUCCESS
 
     ! HEMCO types
     use HCO_Error_Mod,            only: hp          ! HEMCO precision
@@ -82,10 +81,7 @@ module hemco_interface
 !
 ! !PRIVATE MEMBER FUNCTIONS:
 !
-    private :: HCO_GC_Init
-    private :: HCO_GC_SetServices
     private :: HCO_GC_Run
-    private :: HCO_GC_Final
 
     private :: HCOI_Initialize_Pbuf
 !
@@ -97,43 +93,20 @@ module hemco_interface
     public  :: HCOI_Chunk_Final
 !
 ! !REMARKS:
-!  This file is both the interface of HEMCO component to CAM and the manager of the
-!  underlying HEMCO gridded component (HCO\_GC\_*).
-!
-!  The whole file is getting a little long in the tooth, though. It might be reorg-
-!  anized in the future to service hemco_init/run/final which manages the gridded
-!  components, which in turn call the HEMCO chunk interface (HCOI\_Chunk\_*).
-!
-!  For now, the HEMCO chunk interfaces (HCOI\_Chunk\_*) are called in directly from
-!  CAM cam_control.F90. I am not in the mood of writing a wrapper for now, but this
-!  could be abstracted in the future. (hplin, 3/29/20)
-!
-!  On a side note, this is the 8th day of living in the 2019-nCoV scare. I miss
-!  matcha tea and would die to eat some sweets.
-!
-!  It is now October 29 and COVID-19 is still raging across the globe; it feels
-!  like time has frozen itself since March 21, and we've all been "on one long Zoom call"
-!  ever since.
-!
-!  All I hope for 2021, is that the world does not pull a "You can now play as Luigi" on me.
+!  This file is interfaces HEMCO to CAM. The HEMCO chunk interfaces
+!  (HCOI\_Chunk\_*) are called directly from CAM cam_control.F90. They run per-chunk.
 !
 !  Updated 2/24/21 from T. Fritz: Now uses constituents list, since short-term species are
 !  not emitted. See PR: https://github.com/jimmielin/HEMCO_CESM/pull/5
 !
-!  It is now May 15, 2021 and I am vaccinated. Can we visit other peoples homes now?
-!  ref: xkcd.com/2454
-!
 ! !REVISION HISTORY:
-!  29 Jan 2020 - H.P. Lin    - Initial version
+!  See Git for revision history.
 !EOP
 !------------------------------------------------------------------------------
 !BOC
 !
 ! !PRIVATE TYPES:
 !
-    type(ESMF_GridComp)              :: HCO_GridComp        ! HEMCO GridComp
-    type(ESMF_State)                 :: HCO_GridCompState   ! HEMCO GridComp Import/Export State
-
     character(len=256)               :: HcoRoot             ! HEMCO data root path
     character(len=256)               :: HcoConfigFile       ! HEMCO configuration file path
     character(len=256)               :: HcoDiagnFile        ! HEMCO diagnostics config file path
@@ -150,9 +123,7 @@ module hemco_interface
     integer                          :: HcoFixYY            ! if > 0, force 'Emission year'
 
     ! Meteorological fields used by HEMCO to be regridded to the HEMCO grid (hplin, 3/31/20)
-    ! We have to store the fields because the regridding can only take place within the GridComp.
-    ! Fields are allocated after the internal grid is initialized (so my_* are avail)
-    !
+    ! Fields are stored in hco_cam_convert_state_mod and regridded in HCO_GC_Run.
     ! Moved to hco_cam_convert_state_mod, 12/16/20
 
 contains
@@ -199,7 +170,8 @@ contains
         integer                      :: hemco_grid_ydim = 0
         integer                      :: hemco_emission_year = -1
 
-        namelist /hemco_nl/ hemco_data_root, hemco_config_file, hemco_diagn_file, hemco_grid_xdim, hemco_grid_ydim, hemco_emission_year
+        namelist /hemco_nl/ hemco_data_root, hemco_config_file, hemco_diagn_file, &
+                            hemco_grid_xdim, hemco_grid_ydim, hemco_emission_year
 
         ! Read namelist on master proc
         ! ...
@@ -219,7 +191,8 @@ contains
             write(iulog,*) "hemco_readnl: hemco data root is at = ", trim(hemco_data_root)
             write(iulog,*) "hemco_readnl: hemco config file = ", trim(hemco_config_file)
             write(iulog,*) "hemco_readnl: hemco diagn file = ", trim(hemco_diagn_file)
-            write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", hemco_grid_xdim, " x ", hemco_grid_ydim
+            write(iulog,*) "hemco_readnl: hemco internal grid dimensions will be ", &
+                           hemco_grid_xdim, " x ", hemco_grid_ydim
 
             if(hemco_emission_year .gt. 0) then
                 write(iulog,*) "hemco_readnl: hemco will force emissions year at = ", hemco_emission_year
@@ -267,17 +240,6 @@ contains
         use spmd_utils,       only: npes, iam
         use perf_mod,         only: t_startf, t_stopf
 
-        use mpi,              only: MPI_INTEGER
-        use ESMF,             only: ESMF_VM, ESMF_VMGetCurrent, ESMF_VMGet
-        use ESMF,             only: ESMF_GridCompCreate, ESMF_GridCompInitialize
-        use ESMF,             only: ESMF_GridCompSetServices
-        use ESMF,             only: ESMF_StateCreate
-
-        use ESMF,             only: ESMF_Initialize, ESMF_LOGKIND_MULTI
-
-        ! CAM instance information
-        use cam_instance,     only: inst_index, inst_name
-
         ! CAM history output (to be moved somewhere later)
         use cam_history,      only: addfld, add_default, horiz_only
 
@@ -321,17 +283,6 @@ contains
         integer                      :: HMRC                 ! HEMCO return code
 
         integer                      :: N                    ! Loop idx
-
-        ! Gridded component properties.
-        ! Note that while edyn_grid_comp initializes the GridComp directly using
-        ! cam_instance's inst_name, I think this may cause namespace clashing.
-        ! So I'll be prefixing this with hco_ just incase.
-        character(len=32)            :: HCO_GC_InstName = ''
-        type(ESMF_VM)                :: hco_esmf_vm
-
-        ! MPI stuff
-        integer                      :: localPET, PETcount
-        integer, allocatable         :: PETlist(:)           ! PETs for each instance of the physics grid
 
         ! HEMCO properties
         integer                      :: nHcoSpc
@@ -385,44 +336,6 @@ contains
         !   write(iulog,*) "HEMCO_CESM debug (init): CAM date at end of timestep: year, month, day, tod: ", ts1_year, ts1_month, ts1_day, ts1_tod
         !   write(iulog,*) "HEMCO_CESM debug (init): CAM time at start of timestep: day, s: ", ts0_day, ts0_s
         !   write(iulog,*) "HEMCO_CESM debug (init): CAM time at end of timestep: day, s: n", ts1_day, ts1_s
-        !endif
-
-        !-----------------------------------------------------------------------
-        ! Setup ESMF wrapper gridded component
-        ! Adapted from edyn_grid_comp_init
-        !-----------------------------------------------------------------------
-        call ESMF_VMGetCurrent(hco_esmf_vm, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        call ESMF_VMGet(hco_esmf_vm, localPet=localPET, petCount=PETcount, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        ! Allocate and collect PETs for each instance of the physics grid
-        allocate(PETlist(npes))
-            ! sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm, ierror
-        call mpi_allgather(localPET, 1, MPI_INTEGER, PETlist, 1, MPI_INTEGER, mpicom, RC)
-        
-        ! Create ESMF gridded component
-        ! This gridded component's IRF routines are defined in hemco_interface::HCO_GC_SetServices
-        ! See there for more information. (hplin, 2/6/20)
-        HCO_GC_InstName = 'HCO_' // trim(inst_name)
-        HCO_GridComp = ESMF_GridCompCreate(name=trim(HCO_GC_InstName), petList=PETlist, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        ! Create a dummy import / export state.
-        call ESMF_GridCompSetServices(HCO_GridComp, HCO_GC_SetServices, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        HCO_GridCompState = ESMF_StateCreate(name='HEMCO GridComp State', rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        call ESMF_GridCompInitialize(HCO_GridComp, importState=HCO_GridCompState, exportState=HCO_GridCompState, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        !if(masterproc) then
-        !    write(iulog,*) "> Initialized ESMF environment successfully! localPET, PETcount", localPET, PETcount
-        !    write(iulog,*) "> iam, npes", iam, npes
-        !    write(iulog,*) "> PETlist", PETlist
         !endif
 
         !-----------------------------------------------------------------------
@@ -1141,9 +1054,6 @@ contains
         ! Performance timers
         use perf_mod,       only: t_startf, t_stopf
 
-        ! ESMF
-        use ESMF,           only: ESMF_GridCompRun
-
 !
 ! !INPUT PARAMETERS:
 !
@@ -1171,18 +1081,7 @@ contains
             write(iulog,*) "HEMCO_CESM: Running HCOI_Chunk_Run phase", phase
         endif
 
-        ! We only run the gridded components on Phase 2 per recommendations
-        ! from Steve, but this can be easily extended.
-        !
-        ! In edyn_grid_comp, the ionosphere interface runs on run1 and run2
-        ! and uses a global variable to control the gridded component's
-        ! run stage. This is not needed for HEMCO right now but we can always
-        ! implement this in the future.
-        !
-        ! HEMCO also has two stages, but the distinction is not necessary
-        ! in the CAM interface. For more information, look at the actual
-        ! run routine in the gridded component HCO_GC_Run.
-        ! (hplin, 2/6/20)
+        ! We only run HEMCO on Phase 2.
         if(phase == 2) then
             ! Only need to do this once to save time.
             ! reset all the physics buffer contents
@@ -1209,11 +1108,9 @@ contains
                                     HcoState, ExtState)
             call t_stopf('HCO_CAM_GetBefore_HCOI')
 
-            ! Run the gridded component.
+            ! Run HEMCO core routines.
             call t_startf('HCO_GridCompRun')
-            call ESMF_GridCompRun(HCO_GridComp, rc=RC)!importState=HCO_GridCompState, &
-                                                !exportState=HCO_GridCompState, &
-                                                !rc=RC)
+            call HCO_GC_Run(RC)
             call t_stopf('HCO_GridCompRun')
 
             ASSERT_(RC==ESMF_SUCCESS)
@@ -1241,18 +1138,6 @@ contains
     subroutine HCOI_Chunk_Final()
         ! Stub...
     end subroutine HCOI_Chunk_Final
-    !-----------------------------------------------------------------------
-    !              H E M C O   W R A P P E R   G R I D C O M P             !
-    !-----------------------------------------------------------------------
-    !  Below code includes internal routines used to wrap a ESMF gridded   !
-    !  component around the HEMCO interface, so ESMF can handle all the    !
-    !  interaction with the physics mesh.                                  !
-    !                                                                      !
-    !  This is largely based on edyn_grid_comp.F90 from ionosphere/waccmx  !
-    !  Thanks to Steve Goldhaber for the example                           !
-    !                                                                      !
-    !  (hplin, 1/31/20)                                                    !
-    !-----------------------------------------------------------------------
 !EOC
 !------------------------------------------------------------------------------
 !                    Harmonized Emissions Component (HEMCO)                   !
@@ -1261,16 +1146,14 @@ contains
 !
 ! !IROUTINE: HCO_GC_Run
 !
-! !DESCRIPTION: HCO\_GC\_Run is an internal method in the HEMCO gridded component
-!  in CAM. It runs the main routines of HEMCO and is called by ESMF.
-!  The routines inside the GridComp operate on the HEMCO grid and are responsible
+! !DESCRIPTION: HCO\_GC\_Run runs the main routines of HEMCO.
+!  The routines operate on the HEMCO grid and are responsible
 !  to run regridding routines to return data into the physics mesh.
-!  In short, code goes here.
 !\\
 !\\
 ! !INTERFACE:
 !
-    subroutine HCO_GC_Run(GC, IMPORT, EXPORT, Clock, RC)
+    subroutine HCO_GC_Run(RC)
 !
 ! !USES:
 !
@@ -1306,14 +1189,7 @@ contains
 !
 ! !INPUT/OUTPUT PARAMETERS:
 !
-        type(ESMF_GridComp)                   :: GC
-        type(ESMF_State)                      :: IMPORT
-        type(ESMF_State)                      :: EXPORT
-        type(ESMF_Clock)                      :: Clock
         integer, intent(out)                  :: RC
-!
-! !REMARKS:
-!  All the input/output parameters here are dummies.
 !
 ! !REVISION HISTORY:
 !  06 Feb 2020 - H.P. Lin    - Initial version
@@ -1460,8 +1336,14 @@ contains
         ! Use HcoClock_Set and not common SetHcoTime because we don't have DOY
         ! and we want HEMCO to do the math for us.
         if(masterproc) then
-            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') "HEMCO_CESM: Internally HEMCO was at (Sim H:M:S:nStep) ", HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
-            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", ts0_year, "-", ts0_month, "-", ts0_day, " ", hour, ":", minute, ":", second
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I4.4)') &
+                  "HEMCO_CESM: Internally HEMCO was at (Sim H:M:S:nStep) ", &
+                  HcoState%Clock%SimHour, ":", HcoState%Clock%SimMin, ":", &
+                  HcoState%Clock%SimSec, " x", HcoState%Clock%nSteps
+            write(iulog,'(A,I4,A,I2.2,A,I2.2,A,I2.2,A,I2.2,A,I2.2)') &
+                  "HEMCO_CESM: Updating HEMCO clock to set (Y-M-D H:I:S) ", &
+                  ts0_year, "-", ts0_month, "-", ts0_day, " ", &
+                  hour, ":", minute, ":", second
         endif
 
         call HCOClock_Set(HcoState, ts0_year, ts0_month, ts0_day,  &
@@ -1714,7 +1596,8 @@ contains
             !                     / State_Grid%Area_M2(I,J)
             !
             !  Note that, AD is actually DELP_DRY * G0_100 * AREA_M2, thus the final expression is
-            !  just multiplied by DELP_DRY * G0_100, unit: kg/m2 (delp_dry is hPa, g0_100 is 100 Pa/hPa * s2/m --> unit = Pa*m/s2 = kg/m/s2*s2/m = kg/m2)
+            !  just multiplied by DELP_DRY * G0_100, unit: kg/m2
+            !  (delp_dry is hPa, g0_100 is 100 Pa/hPa * s2/m --> unit = Pa*m/s2 = kg/m/s2*s2/m = kg/m2)
             !  Multiplied by 1/s, this gives kg/m2/s
             !
             ! We retrieve the concentration flux read from the convert state module
@@ -1749,9 +1632,11 @@ contains
                 ! Note handling is for surface (idx LM for CAM inverted-atm)
                 if(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "DMS") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmDMS(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
@@ -1759,9 +1644,11 @@ contains
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ACET" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3COCH3") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmACET(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
@@ -1769,9 +1656,11 @@ contains
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ALD2" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3CHO") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmALD2(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
@@ -1779,25 +1668,31 @@ contains
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MOH" .or. &
                    trim(HcoConfig%ModelSpc(spcID)%SpcName) == "CH3OH") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmMOH(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "MENO3") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmMENO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
                 elseif(trim(HcoConfig%ModelSpc(spcID)%SpcName) == "ETNO3") then
                     if(HcoConfig%ModelSpc(spcID)%DimMax .eq. 3) then
-                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM(LM,:) = exportFldCAM(LM,:) - &
+                            exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                     elseif(HcoConfig%ModelSpc(spcID)%DimMax .eq. 2) then
-                        exportFldCAM2(:)   = exportFldCAM2(:)   - exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
+                        exportFldCAM2(:)   = exportFldCAM2(:)   - &
+                            exportFldCAMDep(:) * State_CAM_chmETNO3(:) * State_CAM_DELP_DRYs(:) * G0_100
                     else
                         ASSERT_(.false.)
                     endif
@@ -1823,15 +1718,6 @@ contains
             endif
 
         enddo
-
-
-        !-----------------------------------------------------------------------
-        ! Update aerosol number emissions with correct parameters
-        ! for CAM-chem and CESM2-GC
-        !
-        ! TODO: Implement later. Now using HEMCO config file method (hplin, 5/7/21)
-        !-----------------------------------------------------------------------
-        ! call HCO_Calc_Aero_Emis ( ... )
 
         !-----------------------------------------------------------------------
         ! Handle special diagnostics for some extensions
@@ -2437,84 +2323,5 @@ contains
         RC = ESMF_SUCCESS
 
     end subroutine HCO_GC_Run
-
-    !---------------------------------------------------------------------
-    ! Every HEMCO GridComp routine below likely will be just boilerplate
-    ! that does not need extensive maintenance
-    !---------------------------------------------------------------------
-
-    ! Init routine for the Gridded Component
-    ! Largely based off edyn_grid_comp::edyn_gcomp_init
-    subroutine HCO_GC_Init(GC, IMPORT, EXPORT, Clock, RC)
-        use spmd_utils,     only: masterproc
-        use cam_logfile,    only: iulog
-
-        ! Dummy arguments
-        type(ESMF_GridComp)                   :: GC
-        type(ESMF_State)                      :: IMPORT
-        type(ESMF_State)                      :: EXPORT
-        type(ESMF_Clock)                      :: Clock
-        integer, intent(out)                  :: RC
-
-        ! Local variables
-        character(len=*),       parameter     :: subname = 'HCO_GC_Init'
-
-        ! Note hplin 2/17/20: It seems like the physics mesh is re-created in
-        ! edyn_esmf through edyn_create_physmesh. It may be redundant to do
-        ! the CAM_DistGrid and CAM_PhysMesh maneuvers here and do this in
-        ! HCO_ESMF_Grid::HCO_Grid_ESMF_CreateCAM instead.
-
-        RC = ESMF_SUCCESS
-
-    end subroutine HCO_GC_Init
-
-    ! Finalize Gridded Component
-    subroutine HCO_GC_Final(GC, IMPORT, EXPORT, Clock, RC)
-        ! use ESMF,         only: ESMF_MeshDestroy
-
-        ! Dummy arguments
-        type(ESMF_GridComp)                   :: GC
-        type(ESMF_State)                      :: IMPORT
-        type(ESMF_State)                      :: EXPORT
-        type(ESMF_Clock)                      :: Clock
-        integer, intent(out)                  :: RC
-
-        ! Local variables
-        character(len=*),       parameter     :: subname = 'HCO_GC_Final'
-
-        ! call ESMF_MeshDestroy(CAM_PhysMesh, rc=RC)
-        ! ASSERT_(RC==ESMF_SUCCESS)
-
-        RC = ESMF_SUCCESS
-
-    end subroutine HCO_GC_Final
-
-    subroutine HCO_GC_SetServices(GC, RC)
-        use ESMF,         only: ESMF_GridCompSetEntryPoint
-        use ESMF,         only: ESMF_METHOD_INITIALIZE
-        use ESMF,         only: ESMF_METHOD_RUN
-        use ESMF,         only: ESMF_METHOD_FINALIZE
-
-        type(ESMF_GridComp)                   :: GC
-        integer, intent(out)                  :: RC
-        character(len=*),       parameter     :: subname = 'HCO_GC_SetServices'
-
-        ! Set the IRF methods as follows:
-        ! HEMCO Gridded Component dummy
-        !   > Init:     hemco_interface::HCO_GC_Init
-        !   > Run:      hemco_interface::HCO_GC_Run
-        !   > Final:    hemco_interface::HCO_GC_Final
-        !
-        ! Note from Steve: " all the actual regridding will have to happen inside the gridded component's run method."
-
-        call ESMF_GridCompSetEntryPoint(GC, ESMF_METHOD_INITIALIZE, userRoutine=HCO_GC_Init,  rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        call ESMF_GridCompSetEntryPoint(GC, ESMF_METHOD_RUN,        userRoutine=HCO_GC_Run,   rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-
-        call ESMF_GridCompSetEntryPoint(GC, ESMF_METHOD_FINALIZE,   userRoutine=HCO_GC_Final, rc=RC)
-        ASSERT_(RC==ESMF_SUCCESS)
-    end subroutine HCO_GC_SetServices
 !EOC
 end module hemco_interface

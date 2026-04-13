@@ -152,10 +152,8 @@ module hco_esmf_grid
     !     Ap(L)         has the same units as surface pressure [hPa]
     !     Bp(L)         is  a unitless constant given at level edges
     !
-    ! Note: I don't know what to do about PEDGE, surface pressure and the like.
-    !       they likely need a regrid through ESMF from State%PSDry or something.
-    !       This is only available in the GridComp Run, not worrying about it here.
-    !       (hplin, 2/11/20)
+    ! Note: PEDGE, surface pressure, etc. are regridded through ESMF
+    !       in HCO_GC_Run. (hplin, 2/11/20)
     real(r8), public, pointer  ::                  &
                                   AREA_M2(:,:),    & ! Area of grid box [m^2]
                                   Ap     (:),      & ! "hyai" Hybrid-sigma Ap value [Pa]

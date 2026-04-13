@@ -65,7 +65,7 @@ module hco_cam_exports
 !
 !  The workflow is usually to register the grid here and hemco_interface will
 !  initialize the fields (into both history and pbuf as necessary)
-!  The fields are written into by hemco_interface through the run gridcomp,
+!  The fields are written into by hemco_interface through HCO_GC_Run,
 !  usually after regridding back to the physics chunk so it fits in pbuf format.
 !
 !  History output doesn't need regrid as we register the HCO grid with cam_history
