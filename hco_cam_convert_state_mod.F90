@@ -66,13 +66,11 @@ module hco_cam_convert_state_mod
 !  The code here is structurally based on the WRF-GC coupler, but the actual
 !  conversion logic is from CESM-GC.
 !
-!  Note that there are unique constraints here:
-!  1) the CAM data structures have to be retrieved outside the GridComp in
-!     HCOI_Chunk_Run phase two. Thus CAM_GetBefore_HCOI will populate the fields
-!     as a memory copy from CAM state into State_CAM_* here. These are PRIVATE types.
-!  2) the regridder has to run within the GridComp. Thus they are regridded using
-!     another method CAM_RegridSet_HCOI and populates the PUBLIC, State_HCO_* data,
-!     which is usable on the HEMCO grid.
+!  Note that there are two phases here:
+!  1) CAM_GetBefore_HCOI will populate the fields as a memory copy from CAM state
+!     into State_CAM_* here. These are PRIVATE types.
+!  2) CAM_RegridSet_HCOI regrids the fields and populates the PUBLIC, State_HCO_*
+!     data, which is usable on the HEMCO grid.
 !
 !  All indices are native, and all your base are belong to us. (hplin, 12/15/20)
 !
@@ -256,7 +254,7 @@ contains
 !
 ! !REMARKS:
 !  Fields are allocated here after initialization of the hco\_esmf\_grid.
-!  They are regridded inside the gridcomp.
+!  They are regridded inside HCO_GC_Run.
 !  A "state conversion" to convert CAM met fields to GEOSFP format will
 !  need to be coordinated with fritzt later down the road (hplin, 3/27/20)
 !
@@ -483,7 +481,7 @@ contains
 ! !IROUTINE: CAM_GetBefore_HCOI
 !
 ! !DESCRIPTION: CAM\_GetBefore\_HCOI populates the internal copy of CAM state
-!  within the conversion module to prepare for regridding within the gridcomp.
+!  within the conversion module to prepare for regridding within HCO_GC_Run.
 !\\
 !\\
 ! !INTERFACE:
@@ -787,7 +785,7 @@ contains
 ! !IROUTINE: CAM_RegridSet_HCOI
 !
 ! !DESCRIPTION: CAM\_GetBefore\_HCOI populates the internal copy of CAM state
-!  within the conversion module to prepare for regridding within the gridcomp.
+!  within the conversion module to prepare for regridding within HCO_GC_Run.
 !\\
 !\\
 ! !INTERFACE:

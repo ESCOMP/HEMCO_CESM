@@ -2,6 +2,10 @@
 
 This file documents all notable changes to the HEMCO-CESM interface since late 2022.
 
+## [2.3.0] - 2026-04-12
+### Changed
+- No longer has standalone ESMF GridComp since CESM has fully adopted the NUOPC coupler
+
 ## [2.2.0] - 2024-04-07
 ### Fixed
  - Enable b4b reproducibility in all CAM <-> HCO regridding by passing srcTermProcessing=1 to ESMF_RegridFieldStore
